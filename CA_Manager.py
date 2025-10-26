@@ -1743,7 +1743,7 @@ class CAManager(QtWidgets.QMainWindow):
                     f'OpenSSL log file has been cleared successfully:\n{LOG_FILE}',
                     QtWidgets.QMessageBox.Information,
                     "default",
-                    QtWidgets.QMessgeBox.Ok,
+                    QtWidgets.QMessageBox.Ok,
                     QtWidgets.QMessageBox.Ok
                 )
                 msg_box.exec_()
@@ -1753,7 +1753,7 @@ class CAManager(QtWidgets.QMainWindow):
                     f'Failed to clear log file:\n{str(e)}',
                     QtWidgets.QMessageBox.Critical,
                     "default",
-                    QtWidgets.QMessgeBox.Ok,
+                    QtWidgets.QMessageBox.Ok,
                     QtWidgets.QMessageBox.Ok
                 )
                 msg_box.exec_()
