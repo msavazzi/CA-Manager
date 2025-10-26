@@ -373,6 +373,52 @@ def format_sections(config, sections):
             out += "\n"
     return out
 
+def create_custom_message_box(parent, title, text, message_type, operation_type="default", 
+                             buttons=QtWidgets.QMessageBox.Ok, default_button=None):
+    """Create a message box with custom title bar icon, standard internal icon, and configurable buttons"""
+    msg_box = QtWidgets.QMessageBox(parent)
+    msg_box.setWindowTitle(title)
+    msg_box.setText(text)
+    
+    # Set standard internal icon based on message type
+    msg_box.setIcon(message_type)
+    
+    # Set buttons
+    msg_box.setStandardButtons(buttons)
+    
+    # Set default button if specified
+    if default_button is not None:
+        msg_box.setDefaultButton(default_button)
+    
+    # Map operation types to custom title bar icons
+    icon_map = {
+        "renew": "key-link.svg",
+        "revoke": "key-remove.svg", 
+        "keychain": "key-change.svg",
+        "new_cert": "key-plus.svg",
+        "default": "key-chain.svg"
+    }
+    icon_filename = icon_map.get(operation_type, icon_map["default"])
+    custom_icon_path = os.path.join(SCRIPT_DIR, icon_filename)
+
+    # Try to load custom icon for title bar
+    if custom_icon_path and os.path.exists(custom_icon_path):
+        try:
+            icon = QtGui.QIcon(custom_icon_path)
+            if not icon.isNull():
+                # Set as WINDOW ICON (title bar) - this doesn't interfere with internal icon
+                msg_box.setWindowIcon(icon)
+                openssl_logger.info(f"Custom message box title bar icon loaded: {custom_icon_path}")
+            else:
+                openssl_logger.warning(f"Custom message box icon failed to load: {custom_icon_path}")
+        except Exception as e:
+            openssl_logger.warning(f"Error loading custom message box icon: {str(e)}")
+    else:
+        if custom_icon_path:
+            openssl_logger.info(f"Custom message box icon not found: {custom_icon_path}")
+    
+    return msg_box
+
 class CertificateItem:
     # Helper class to store certificate data
     def __init__(self, cert_path, cert_type, status, subject, issuer, expiry_str, icon):
@@ -391,6 +437,16 @@ class NewCertificateDialog(QtWidgets.QDialog):
         self.config = config
         self.config_path = config_path
         self.ca_sections = ca_sections
+        # Set dialog icon
+        icon_path = os.path.join(SCRIPT_DIR, "key-plus.svg")
+        if os.path.exists(icon_path):
+            try:
+                self.setWindowIcon(QtGui.QIcon(icon_path))
+                openssl_logger.info(f"New Certificate dialog icon loaded successfully: {icon_path}")
+            except Exception as e:
+                openssl_logger.warning(f"Failed to load New Certificate dialog icon: {str(e)}")
+        else:
+            openssl_logger.info(f"New Certificate dialog icon file not found, using default: {icon_path}")
         self.setupUI()
         self.load_defaults()
 
@@ -680,18 +736,39 @@ class NewCertificateDialog(QtWidgets.QDialog):
         # Execute the certificate creation workflow with logging
         cert_name = self.cert_name_edit.text().strip()
         if not cert_name:
-            QtWidgets.QMessageBox.warning(self, "Missing Information", "Please enter a certificate name.")
+            msg_box = create_custom_message_box(
+                self, "Missing Information", "Please enter a certificate name.",
+                QtWidgets.QMessageBox.Warning,
+                "add_cert",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
+            )
+            msg_box.exec_()
             return
 
         cn = self.cn_edit.text().strip()
         if not cn:
-            QtWidgets.QMessageBox.warning(self, "Missing Information", "Please enter a Common Name (CN).")
+            msg_box = create_custom_message_box(
+                self, "Missing Information", "Please enter a Common Name (CN).",
+                QtWidgets.QMessageBox.Warning,
+                "add_cert",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
+            )
+            msg_box.exec_()
             return
 
         # Get CA private key password from the dialog field
         ca_password = self.ca_password_edit.text().strip()
         if not ca_password:
-            QtWidgets.QMessageBox.warning(self, "Missing Information", "Please enter the CA private key password.")
+            msg_box = create_custom_message_box(
+                self, "Missing Information", "Please enter the CA private key password.",
+                QtWidgets.QMessageBox.Warning,
+                "add_cert",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
+            )
+            msg_box.exec_()
             return
 
         try:
@@ -840,10 +917,15 @@ class NewCertificateDialog(QtWidgets.QDialog):
             if result.returncode != 0:
                 # Check for common password-related errors
                 if "bad decrypt" in result.stderr.lower() or "wrong password" in result.stderr.lower():
-                    QtWidgets.QMessageBox.critical(
+                    msg_box = create_custom_message_box(
                         self, "Incorrect CA Password", 
-                        f"The CA private key password is incorrect.\n\nError: {result.stderr}"
+                        f"The CA private key password is incorrect.\n\nError: {result.stderr}",
+                        QtWidgets.QMessageBox.Critical,
+                        "add_cert",
+                        QtWidgets.QMessageBox.Ok,
+                        QtWidgets.QMessageBox.Ok
                     )
+                    msg_box.exec_()
                     return
                 else:
                     raise Exception(f"Failed to sign certificate: {result.stderr}")
@@ -852,7 +934,7 @@ class NewCertificateDialog(QtWidgets.QDialog):
             openssl_logger.info(f"Certificate creation completed successfully for: {cert_name}")
 
             # Success
-            QtWidgets.QMessageBox.information(
+            msg_box = create_custom_message_box(
                 self, "Certificate Created Successfully",
                 f"Certificate '{cert_name}' has been created successfully!\n\n"
                 f"Files created:\n"
@@ -861,17 +943,29 @@ class NewCertificateDialog(QtWidgets.QDialog):
                 f"• Certificate Request: {csr_file}\n"
                 f"• Certificate: {cert_file}\n\n"
                 f"Subject: {subject}\n\n"
-                f"OpenSSL commands logged to:\n{LOG_FILE}"
+                f"OpenSSL commands logged to:\n{LOG_FILE}",
+                QtWidgets.QMessageBox.Information,
+                "add_cert",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()
+
             self.accept()
 
         except Exception as e:
             openssl_logger.error(f"Certificate creation failed for {cert_name}: {str(e)}")
-            QtWidgets.QMessageBox.critical(
+            msg_box = create_custom_message_box(
                 self, "Certificate Creation Failed",
                 f"Failed to create certificate '{cert_name}':\n\n{str(e)}\n\n"
-                f"Check log file for details:\n{LOG_FILE}"
+                f"Check log file for details:\n{LOG_FILE}",
+                QtWidgets.QMessageBox.Critical,
+                "add_cert",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()
+
         finally:
             # Clear passwords from memory for security
             ca_password = None
@@ -999,9 +1093,20 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.cert_name = cert_name
         self.root_ca_path = ""
-        self.last_validation_result = None
+        self.last_validation_result = None        # Set dialog icon
+        icon_path = os.path.join(SCRIPT_DIR, "key-change.svg")
+        if os.path.exists(icon_path):
+            try:
+                self.setWindowIcon(QtGui.QIcon(icon_path))
+                openssl_logger.info(f"Keychain dialog icon loaded successfully: {icon_path}")
+            except Exception as e:
+                openssl_logger.warning(f"Failed to load keychain dialog icon: {str(e)}")
+        else:
+            openssl_logger.info(f"Keychain dialog icon file not found, using default: {icon_path}")
+        
         self.setup_ui()
         self.load_saved_root_ca_path()  # Load saved path
+
         
     def setup_ui(self):
         # Set up the dialog UI
@@ -1291,10 +1396,94 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         # Get the full validation result
         return self.last_validation_result
 
+class PasswordDialog(QtWidgets.QDialog):
+    """Custom password input dialog with custom icon"""
+    
+    def __init__(self, parent, title, message, operation_type="default"):
+        super().__init__(parent)
+        self.password = ""
+        # Choose icon based on operation type
+        icon_map = {
+            "renew": "key-link.svg",
+            "revoke": "key-remove.svg",
+            "keychain": "key-change.svg",
+            "default": "key-chain.svg"
+        }
+        icon_filename = icon_map.get(operation_type, icon_map["default"])
+        icon_path = os.path.join(SCRIPT_DIR, icon_filename)
+        
+        self.setup_ui(title, message, icon_path)
+        
+    def setup_ui(self, title, message, icon_path):
+        """Set up the password dialog UI"""
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setMinimumSize(350, 150)
+        
+        # Set custom icon if provided
+        if icon_path and os.path.exists(icon_path):
+            try:
+                self.setWindowIcon(QtGui.QIcon(icon_path))
+                openssl_logger.info(f"Password dialog icon loaded: {icon_path}")
+            except Exception as e:
+                openssl_logger.warning(f"Failed to load password dialog icon: {str(e)}")
+        
+        layout = QtWidgets.QVBoxLayout()
+        
+        # Message label
+        message_label = QtWidgets.QLabel(message)
+        message_label.setWordWrap(True)
+        layout.addWidget(message_label)
+        
+        # Password input
+        self.password_edit = QtWidgets.QLineEdit()
+        self.password_edit.setEchoMode(QtWidgets.QLineEdit.Password)
+        self.password_edit.setPlaceholderText("Enter password...")
+        layout.addWidget(self.password_edit)
+        
+        # Buttons
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.addStretch()
+        
+        self.ok_button = QtWidgets.QPushButton("OK")
+        self.ok_button.clicked.connect(self.accept_password)
+        self.ok_button.setDefault(True)
+        button_layout.addWidget(self.ok_button)
+        
+        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.cancel_button)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+        
+        # Focus on password field
+        self.password_edit.setFocus()
+        
+    def accept_password(self):
+        """Accept the password and close dialog"""
+        self.password = self.password_edit.text()
+        self.accept()
+        
+    def get_password(self):
+        """Get the entered password"""
+        return self.password
+
 class CAManager(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OpenSSL CA Manager")
+
+        # Set window icon
+        icon_path = os.path.join(SCRIPT_DIR, "key-chain.svg")
+        if os.path.exists(icon_path):
+            try:
+                self.setWindowIcon(QtGui.QIcon(icon_path))
+                openssl_logger.info(f"Window icon loaded successfully: {icon_path}")
+            except Exception as e:
+                openssl_logger.warning(f"Failed to load window icon: {str(e)}")
+        else:
+            openssl_logger.info(f"Window icon file not found, using default: {icon_path}")
 
         # Create central widget
         central_widget = QtWidgets.QWidget()
@@ -1446,13 +1635,19 @@ class CAManager(QtWidgets.QMainWindow):
         clear_log_action.triggered.connect(self.clear_openssl_log)
         tools_menu.addAction(clear_log_action)
 
+
     def view_openssl_log(self):
         # Show OpenSSL log in a dialog
         if not os.path.exists(LOG_FILE):
-            QtWidgets.QMessageBox.information(
+            msg_box = create_custom_message_box(
                 self, 'No Log File', 
-                f'OpenSSL log file does not exist yet:\n{LOG_FILE}'
+                f'OpenSSL log file does not exist yet:\n{LOG_FILE}',
+                QtWidgets.QMessageBox.Information,
+                "default",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()
             return
         
         try:
@@ -1495,10 +1690,15 @@ class CAManager(QtWidgets.QMainWindow):
             dialog.exec_()
             
         except Exception as e:
-            QtWidgets.QMessageBox.critical(
+            msg_box = create_custom_message_box(
                 self, 'Error Reading Log', 
-                f'Failed to read log file:\n{str(e)}'
+                f'Failed to read log file:\n{str(e)}',
+                QtWidgets.QMessageBox.Critical,
+                "default",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()
 
     def open_file_location(self, file_path):
         # Open the file location in the system file manager
@@ -1513,32 +1713,50 @@ class CAManager(QtWidgets.QMainWindow):
             else:  # Linux and others
                 subprocess.run(["xdg-open", os.path.dirname(file_path)])
         except Exception as e:
-            QtWidgets.QMessageBox.warning(
+            msg_box = create_custom_message_box(
                 self, 'Cannot Open Location',
-                f'Failed to open file location:\n{str(e)}\n\nFile location: {os.path.dirname(file_path)}'
+                f'Failed to open file location:\n{str(e)}\n\nFile location: {os.path.dirname(file_path)}',
+                QtWidgets.QMessageBox.Warning,
+                "default",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()
 
     def clear_openssl_log(self):
         # Clear the OpenSSL log file
-        reply = QtWidgets.QMessageBox.question(
+        msg_box = create_custom_message_box(
             self, 'Clear Log File',
             f'Are you sure you want to clear the OpenSSL log file?\n\n{LOG_FILE}',
+            QtWidgets.QMessageBox.Question,
+            "default",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No
         )
-        
+        reply = msg_box.exec_()
+                
         if reply == QtWidgets.QMessageBox.Yes:
             try:
                 open(LOG_FILE, 'w').close()  # Clear the file
-                QtWidgets.QMessageBox.information(
+                msg_box = create_custom_message_box(
                     self, 'Log Cleared', 
-                    f'OpenSSL log file has been cleared successfully:\n{LOG_FILE}'
+                    f'OpenSSL log file has been cleared successfully:\n{LOG_FILE}',
+                    QtWidgets.QMessageBox.Information,
+                    "default",
+                    QtWidgets.QMessgeBox.Ok,
+                    QtWidgets.QMessageBox.Ok
                 )
+                msg_box.exec_()
             except Exception as e:
-                QtWidgets.QMessageBox.critical(
+                msg_box = create_custom_message_box(
                     self, 'Error Clearing Log', 
-                    f'Failed to clear log file:\n{str(e)}'
+                    f'Failed to clear log file:\n{str(e)}',
+                    QtWidgets.QMessageBox.Critical,
+                    "default",
+                    QtWidgets.QMessgeBox.Ok,
+                    QtWidgets.QMessageBox.Ok
                 )
+                msg_box.exec_()
 
     def closeEvent(self, event):
         save_last_config_path(self.configPathEdit.text())
@@ -1745,10 +1963,15 @@ class CAManager(QtWidgets.QMainWindow):
     def new_certificate(self):
         # Handle new certificate creation
         if not self.ca_config_loaded:
-            QtWidgets.QMessageBox.warning(
+            msg_box = create_custom_message_box(
                 self, 'No CA Configuration',
-                'Please load a CA configuration file first.'
+                'Please load a CA configuration file first.',
+                QtWidgets.QMessageBox.Warning,
+                "new_cert",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()
             return
 
         # Open new certificate dialog
@@ -1766,10 +1989,15 @@ class CAManager(QtWidgets.QMainWindow):
     def renew_certificate(self):
         # Handle certificate renewal with comprehensive logging
         if not self.ca_config_loaded:
-            QtWidgets.QMessageBox.warning(
+            msg_box = create_custom_message_box(
                 self, 'No CA Configuration',
-                'Please load a CA configuration file first.'
+                'Please load a CA configuration file first.',
+                QtWidgets.QMessageBox.Warning,
+                "renew",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()
             return
 
         selected_items = self.certsTree.selectedItems()
@@ -1783,13 +2011,16 @@ class CAManager(QtWidgets.QMainWindow):
         cert_name = cert_file.replace('.cert.pem', '')
 
         # Show confirmation dialog
-        reply = QtWidgets.QMessageBox.question(
+        msg_box = create_custom_message_box(
             self, 'Renew Certificate',
             f'Are you sure you want to renew certificate "{cert_file}"?\n'
             'This will generate a new certificate with extended validity period.',
+            QtWidgets.QMessageBox.Question,
+            "renew",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.No
+            QtWidgets.QMessageBox.Yes 
         )
+        reply = msg_box.exec_()
         
         if reply != QtWidgets.QMessageBox.Yes:
             openssl_logger.info(f"Certificate renewal cancelled by user for: {cert_name}")
@@ -1855,27 +2086,33 @@ class CAManager(QtWidgets.QMainWindow):
             if not csr_file:
                 openssl_logger.error(f"CSR file not found for certificate: {cert_name}")
                 openssl_logger.error(f"Searched in directories: {possible_csr_dirs}")
-                QtWidgets.QMessageBox.warning(
+                msg_box = create_custom_message_box(
                     self, 'CSR Not Found',
                     f'Certificate Signing Request not found for "{cert_name}".\n'
                     'Cannot renew certificate without original CSR.\n\n'
-                    f'Searched in: {base_dir}/[csr|csrs|requests|req]/'
+                    f'Searched in: {base_dir}/[csr|csrs|requests|req]/',
+                    QtWidgets.QMessageBox.Warning,
+                    "renew",
+                    QtWidgets.QMessageBox.Ok,
+                    QtWidgets.QMessageBox.Ok
                 )
+                msg_box.exec_()
                 return
             
-            # Get CA private key password
+            # Get CA private key password with custom dialog
             openssl_logger.info("Requesting CA private key password from user")
-            ca_password, ok = QtWidgets.QInputDialog.getText(
-                self, 'CA Private Key Password',
+            password_dialog = PasswordDialog(
+                self, 
+                'CA Password',
                 'Enter the CA private key password for renewal:',
-                QtWidgets.QLineEdit.Password
+                "renew"  # This will use key-link.svg
             )
-            
-            if not ok:
+            if password_dialog.exec_() != QtWidgets.QDialog.Accepted:
                 openssl_logger.info(f"Certificate renewal cancelled by user (password dialog) for: {cert_name}")
                 return  # User cancelled
-            
-            openssl_logger.info("CA password provided by user")
+
+            ca_password = password_dialog.get_password()
+            openssl_logger.info("CA password provided by user for renewal")            
             
             # Create backup of current certificate
             backup_file = f"{cert_path}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -1917,13 +2154,19 @@ class CAManager(QtWidgets.QMainWindow):
                 openssl_logger.info("=" * 80)
                 openssl_logger.info("")  # Empty line for separation
                 
-                QtWidgets.QMessageBox.information(
+                # Create custom success dialog
+                msg_box = create_custom_message_box(
                     self, 'Certificate Renewed Successfully',
                     f'Certificate "{cert_file}" has been successfully renewed!\n\n'
                     f'Original certificate backed up to:\n{backup_file}\n\n'
                     f'New certificate saved to:\n{cert_path}\n\n'
-                    f'Commands logged to:\n{LOG_FILE}'
+                    f'Commands logged to:\n{LOG_FILE}',
+                    QtWidgets.QMessageBox.Information,
+                    "renew",
+                    QtWidgets.QMessageBox.Ok,
+                    QtWidgets.QMessageBox.Ok
                 )
+                msg_box.exec_()
                 
                 # Refresh certificate list to show updated certificate
                 openssl_logger.info(f"Refreshing certificate list to show renewed certificate: {cert_name}")
@@ -1940,32 +2183,46 @@ class CAManager(QtWidgets.QMainWindow):
                 
                 # Check for common password-related errors
                 if "bad decrypt" in result.stderr.lower() or "wrong password" in result.stderr.lower():
-                    QtWidgets.QMessageBox.critical(
+                    msg_box = create_custom_message_box(
                         self, 'Incorrect Password',
                         f'Incorrect CA private key password.\n\n'
                         f'Error: {result.stderr}\n\n'
-                        'Original certificate has been restored.'
+                        'Original certificate has been restored.',
+                        QtWidgets.QMessageBox.Critical,
+                        "renew",
+                        QtWidgets.QMessageBox.Ok,
+                        QtWidgets.QMessageBox.Ok
                     )
+                    msg_box.exec_()                    
                 else:
-                    QtWidgets.QMessageBox.critical(
+                    msg_box = create_custom_message_box(
                         self, 'Renewal Failed',
                         f'Failed to renew certificate "{cert_file}".\n\n'
                         f'Error: {result.stderr}\n\n'
                         'Original certificate has been restored.\n\n'
-                        f'Check log file: {LOG_FILE}'
+                        f'Check log file: {LOG_FILE}',
+                        QtWidgets.QMessageBox.Critical,
+                        "renew",
+                        QtWidgets.QMessageBox.Ok,
+                        QtWidgets.QMessageBox.Ok
                     )
-                    
+                    msg_box.exec_()                        
         except Exception as e:
             openssl_logger.error("=" * 80)
             openssl_logger.error(f"Certificate renewal failed for {cert_name}: {str(e)}")
             openssl_logger.error("=" * 80)
             openssl_logger.error("")  # Empty line for separation
             
-            QtWidgets.QMessageBox.critical(
+            msg_box = create_custom_message_box(
                 self, 'Renewal Error',
                 f'An error occurred while renewing certificate "{cert_file}":\n\n{str(e)}\n\n'
-                f'Check log file: {LOG_FILE}'
+                f'Check log file: {LOG_FILE}',
+                QtWidgets.QMessageBox.Critical,
+                "renew",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()                        
             
         finally:
             # Clear password from memory for security
@@ -1975,10 +2232,15 @@ class CAManager(QtWidgets.QMainWindow):
     def revoke_certificate(self):
         # Handle certificate revocation
         if not self.ca_config_loaded:
-            QtWidgets.QMessageBox.warning(
+            msg_box = create_custom_message_box(
                 self, 'No CA Configuration',
-                'Please load a CA configuration file first.'
+                'Please load a CA configuration file first.',
+                QtWidgets.QMessageBox.Warning,
+                "renew",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()
             return
 
         selected_items = self.certsTree.selectedItems()
@@ -1992,34 +2254,48 @@ class CAManager(QtWidgets.QMainWindow):
 
         # Double check the certificate is not expired
         if cert_status in ["expired", "invalid"]:
-            QtWidgets.QMessageBox.warning(
+            msg_box = create_custom_message_box(
                 self, 'Cannot Revoke Certificate',
-                f'Cannot revoke certificate "{cert_file}" because it is {cert_status}.'
+                f'Cannot revoke certificate "{cert_file}" because it is {cert_status}.',
+                QtWidgets.QMessageBox.Warning,
+                "revoke",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()
             return
 
-        # Get CA private key password
-        password, ok = QtWidgets.QInputDialog.getText(
-            self, 'CA Private Key Password',
-            'Enter the CA private key password:',
-            QtWidgets.QLineEdit.Password
+        # Get CA private key password with custom dialog
+        password_dialog = PasswordDialog(
+            self, 
+            'CA Password',
+            'Enter the CA private key password for revocation:',
+            "revoke"  # This will use key-remove.svg
         )
 
-        if not ok:
+        if password_dialog.exec_() != QtWidgets.QDialog.Accepted:
+            openssl_logger.info(f"Certificate revocation cancelled by user (password dialog) for: {cert_file}")
             return  # User cancelled
+
+        password = password_dialog.get_password()
+        openssl_logger.info("CA password provided by user for revocation")
 
         # Show confirmation dialog with command info
         config_file = self.configPathEdit.text().strip()
         command = f"openssl ca -revoke {cert_path} -config {config_file} -passin pass:****"
 
-        reply = QtWidgets.QMessageBox.question(
+        # Create custom confirmation dialog with key-remove icon
+        msg_box = create_custom_message_box(
             self, 'Revoke Certificate',
             f'Are you sure you want to revoke certificate "{cert_file}"?\n\n'
             f'Command to execute:\n{command}\n\n'
             'This action cannot be undone!',
+            QtWidgets.QMessageBox.Question,
+            "revoke",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No
         )
+        reply = msg_box.exec_()
 
         if reply == QtWidgets.QMessageBox.Yes:
             try:
@@ -2038,40 +2314,59 @@ class CAManager(QtWidgets.QMainWindow):
                 if result.returncode == 0:
                     openssl_logger.info(f"Certificate revocation completed successfully for: {cert_file}")
                     # Success
-                    QtWidgets.QMessageBox.information(
+                    msg_box = create_custom_message_box(
                         self, 'Certificate Revoked Successfully',
                         f'Certificate "{cert_file}" has been successfully revoked.\n\n'
                         f'Output:\n{result.stdout}\n\n'
                         'The certificate has been added to the revocation list.\n\n'
-                        f'Commands logged to:\n{LOG_FILE}'
+                        f'Commands logged to:\n{LOG_FILE}',
+                        QtWidgets.QMessageBox.Information,
+                        "revoke",
+                        QtWidgets.QMessageBox.Ok,
+                        QtWidgets.QMessageBox.Ok
                     )
+                    msg_box.exec_()
                     # Refresh the certificate list to update status
                     self.load_certificates_list()
                 else:
                     # Error occurred
                     error_msg = result.stderr
                     if "bad decrypt" in error_msg.lower() or "wrong password" in error_msg.lower():
-                        QtWidgets.QMessageBox.critical(
+                        msg_box = create_custom_message_box(
                             self, 'Incorrect Password',
                             f'Incorrect CA private key password.\n\n'
-                            f'Error: {error_msg}'
+                            f'Error: {error_msg}',
+                            QtWidgets.QMessageBox.Critical,
+                            "revoke",
+                            QtWidgets.QMessageBox.Ok,
+                            QtWidgets.QMessageBox.Ok
                         )
+                        msg_box.exec_()
                     else:
-                        QtWidgets.QMessageBox.critical(
+                        msg_box = create_custom_message_box(
                             self, 'Revocation Failed',
                             f'Failed to revoke certificate "{cert_file}".\n\n'
                             f'Error:\n{error_msg}\n\n'
-                            f'Check log file: {LOG_FILE}'
+                            f'Check log file: {LOG_FILE}',
+                            QtWidgets.QMessageBox.Critical,
+                            "revoke",
+                            QtWidgets.QMessageBox.Ok,
+                            QtWidgets.QMessageBox.Ok
                         )
+                        msg_box.exec_()
 
             except Exception as e:
                 openssl_logger.error(f"Certificate revocation failed for {cert_file}: {str(e)}")
-                QtWidgets.QMessageBox.critical(
+                msg_box = create_custom_message_box(
                     self, 'Revocation Error',
-                    f'An error occurred while revoking certificate "{cert_file}":\n\n'
-                    f'{str(e)}\n\n'
-                    f'Check log file: {LOG_FILE}'
+                    f'An error occurred while revoking certificate "{cert_file}":\n\n{str(e)}\n\n'
+                    f'Check log file: {LOG_FILE}',
+                    QtWidgets.QMessageBox.Critical,
+                    "revoke",
+                    QtWidgets.QMessageBox.Ok,
+                    QtWidgets.QMessageBox.Ok
                 )
+                msg_box.exec_()
             finally:
                 # Ensure password is cleared from memory
                 password = None
@@ -2079,10 +2374,15 @@ class CAManager(QtWidgets.QMainWindow):
     def create_keychain(self):
         # Handle keychain creation with custom dialog and comprehensive logging
         if not self.ca_config_loaded:
-            QtWidgets.QMessageBox.warning(
+            msg_box = create_custom_message_box(
                 self, 'No CA Configuration',
-                'Please load a CA configuration file first.'
+                'Please load a CA configuration file first.',
+                QtWidgets.QMessageBox.Critical,
+                "keychain",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()            
             return
 
         selected_items = self.certsTree.selectedItems()
@@ -2098,18 +2398,28 @@ class CAManager(QtWidgets.QMainWindow):
         # Double check the certificate is valid and not already a keychain
         if cert_status not in ["valid", "warning"]:
             openssl_logger.warning(f"Keychain creation refused - invalid certificate status: {cert_file} ({cert_status})")
-            QtWidgets.QMessageBox.warning(
+            msg_box = create_custom_message_box(
                 self, 'Invalid Certificate',
-                f'Cannot create keychain for certificate "{cert_file}" because it is {cert_status}.'
+                f'Cannot create keychain for certificate "{cert_file}" because it is {cert_status}.',
+                QtWidgets.QMessageBox.Warning,
+                "keychain",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()            
             return
 
         if cert_file.startswith("keychain."):
             openssl_logger.warning(f"Keychain creation refused - already a keychain: {cert_file}")
-            QtWidgets.QMessageBox.warning(
+            msg_box = create_custom_message_box(
                 self, 'Already a Keychain',
-                f'The selected file "{cert_file}" is already a keychain file.'
+                f'The selected file "{cert_file}" is already a keychain file.',
+                QtWidgets.QMessageBox.Warning,
+                "keychain",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()            
             return
 
         # Show custom dialog to get root CA certificate
@@ -2227,7 +2537,7 @@ class CAManager(QtWidgets.QMainWindow):
             openssl_logger.info("")  # Empty line for separation
             
             # Success message
-            QtWidgets.QMessageBox.information(
+            msg_box = create_custom_message_box(
                 self, 'Keychain Created Successfully',
                 f'Keychain file "{keychain_filename}" has been created successfully!\n\n'
                 f'Location: {keychain_path}\n\n'
@@ -2235,8 +2545,13 @@ class CAManager(QtWidgets.QMainWindow):
                 f'• Selected Certificate: {os.path.basename(cert_path)}\n'
                 f'• Intermediate Certificate: {os.path.basename(intermediate_cert_path)}\n'
                 f'• Root CA Certificate: {os.path.basename(root_ca_path)}\n\n'
-                f'Operation logged to:\n{LOG_FILE}'
+                f'Operation logged to:\n{LOG_FILE}',
+                QtWidgets.QMessageBox.Information,
+                "keychain",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok    
             )
+            msg_box.exec_()
             
             # Refresh certificate list to show new keychain file
             openssl_logger.info(f"Refreshing certificate list to show new keychain: {keychain_filename}")
@@ -2248,11 +2563,17 @@ class CAManager(QtWidgets.QMainWindow):
             openssl_logger.error("=" * 80)
             openssl_logger.error("")  # Empty line for separation
             
-            QtWidgets.QMessageBox.critical(
+            msg_box = create_custom_message_box(
                 self, 'Keychain Creation Failed',
                 f'Failed to create keychain for certificate "{cert_file}":\n\n{str(e)}\n\n'
-                f'Check log file for details:\n{LOG_FILE}'
+                f'Check log file for details:\n{LOG_FILE}',
+                QtWidgets.QMessageBox.Critical,
+                "keychain",
+                QtWidgets.QMessageBox.Ok,
+                QtWidgets.QMessageBox.Ok
             )
+            msg_box.exec_()
+
     def show_cert_details(self, item, column):
         cert_path = item.data(0, QtCore.Qt.UserRole)
         cert_type = item.data(1, QtCore.Qt.UserRole)
