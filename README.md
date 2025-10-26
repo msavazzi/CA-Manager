@@ -14,6 +14,7 @@ A graphical user interface (GUI) tool built with PyQt5 to manage OpenSSL Certifi
 - 🔍 Filter expired certificates
 - 📊 View OpenSSL configuration sections
 - 📝 Comprehensive logging of OpenSSL operations
+- 🔗 Create complete certificate chains (keychains)
 
 ## Requirements
 
@@ -128,6 +129,11 @@ The "New Certificate" button allows you to create certificates with the followin
 - Filter expired certificates using the "Hide Expired Certificates" checkbox
 - Renew certificates that are expired or about to expire
 - Revoke certificates that are no longer needed or compromised
+- Create certificate chains (keychains):
+  - Combines selected certificate with intermediate and root CA certificates
+  - Available only for valid single certificates (not expired or chains)
+  - Creates keychain files in format: `keychain.<certname>.cert.pem`
+  - Helps in setting up complete certificate chains for servers
 
 ### Logging
 
@@ -155,6 +161,10 @@ The tool remembers your last used OpenSSL configuration file path in `ca_manager
 - Certificate chain detection and handling
 - Subject Alternative Name (SAN) support
 - Password visibility toggle for secure input
+- Smart button activation based on certificate status:
+  - Renew/Revoke enabled only for valid certificates
+  - Create Keychain available only for valid single certificates
+  - Automatic detection of certificate types and chains
 
 ## File Structure
 
