@@ -4,14 +4,13 @@
 # certificates using OpenSSL, including logging, config parsing, and UI.   
 ###########################################################################
 
-
 import configparser
 import os
 import re
 import subprocess
 import tempfile
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from PyQt5 import QtWidgets, QtGui, QtCore
 
 # Get the directory where the script is located
@@ -228,7 +227,7 @@ def certificate_status_icon(expiry, cert_type="single", has_error=False):
     if has_error or expiry is None:
         return "invalid"
     
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     
     if cert_type == "chain":
         # For chains, still check expiry but use chain icon if valid
@@ -952,13 +951,14 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.cert_name = cert_name
         self.root_ca_path = ""
+        self.last_validation_result = None
         self.setup_ui()
         
     def setup_ui(self):
         """Set up the dialog UI"""
         self.setWindowTitle(f"Create Keychain for {self.cert_name}")
         self.setModal(True)
-        self.resize(500, 200)
+        self.resize(500, 280)
         
         layout = QtWidgets.QVBoxLayout()
         
@@ -972,18 +972,26 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         
         # Root CA certificate selection group
         ca_group = QtWidgets.QGroupBox("Root CA Certificate")
-        ca_layout = QtWidgets.QHBoxLayout()
+        ca_layout = QtWidgets.QVBoxLayout()
         
-        # Text box for certificate path
+        # Text box and browse button layout
+        path_layout = QtWidgets.QHBoxLayout()
         self.root_ca_edit = QtWidgets.QLineEdit()
         self.root_ca_edit.setPlaceholderText("Path to root CA certificate file...")
         self.root_ca_edit.textChanged.connect(self.validate_certificate_path)
-        ca_layout.addWidget(self.root_ca_edit)
+        path_layout.addWidget(self.root_ca_edit)
         
-        # Browse button
         self.browse_button = QtWidgets.QPushButton("Browse")
         self.browse_button.clicked.connect(self.browse_root_ca)
-        ca_layout.addWidget(self.browse_button)
+        path_layout.addWidget(self.browse_button)
+        
+        ca_layout.addLayout(path_layout)
+        
+        # Validation status label
+        self.validation_label = QtWidgets.QLabel("")
+        self.validation_label.setWordWrap(True)
+        self.validation_label.setStyleSheet("QLabel { margin: 5px; padding: 5px; }")
+        ca_layout.addWidget(self.validation_label)
         
         ca_group.setLayout(ca_layout)
         layout.addWidget(ca_group)
@@ -1015,34 +1023,193 @@ class CreateKeychainDialog(QtWidgets.QDialog):
             self.root_ca_edit.setText(file_path)
             
     def validate_certificate_path(self):
-        """Validate the certificate path and enable/disable OK button"""
+        """Comprehensive certificate validation with OpenSSL and logging"""
         path = self.root_ca_edit.text().strip()
         
-        # Check if path exists and is a file
-        if path and os.path.exists(path) and os.path.isfile(path):
-            # Basic validation - check if it looks like a certificate file
-            try:
-                with open(path, 'r') as f:
-                    content = f.read()
-                    # Check for certificate markers
-                    if "-----BEGIN CERTIFICATE-----" in content and "-----END CERTIFICATE-----" in content:
-                        self.ok_button.setEnabled(True)
-                        return
-            except Exception:
-                pass
-        
-        # If we get here, the path is invalid
+        # Clear previous validation state
         self.ok_button.setEnabled(False)
+        self.last_validation_result = None
+        
+        # Basic path validation
+        if not path:
+            self.set_validation_message("", "")
+            return
+            
+        if not os.path.exists(path):
+            self.set_validation_message("File does not exist.", "error")
+            openssl_logger.warning(f"Keychain dialog: Root CA file does not exist: {path}")
+            return
+            
+        if not os.path.isfile(path):
+            self.set_validation_message("Path is not a file.", "error")
+            openssl_logger.warning(f"Keychain dialog: Root CA path is not a file: {path}")
+            return
+        
+        # Check if it's a keychain file (not allowed for root CA)
+        filename = os.path.basename(path)
+        if filename.startswith("keychain."):
+            self.set_validation_message("Root CA cannot be a keychain file.", "error")
+            openssl_logger.warning(f"Keychain dialog: Root CA file is a keychain (not allowed): {path}")
+            return
+        
+        # Basic file content validation
+        try:
+            with open(path, 'r') as f:
+                content = f.read()
+                if not ("-----BEGIN CERTIFICATE-----" in content and "-----END CERTIFICATE-----" in content):
+                    self.set_validation_message("File does not contain a valid certificate format.", "error")
+                    openssl_logger.warning(f"Keychain dialog: Root CA file missing certificate markers: {path}")
+                    return
+        except Exception as e:
+            self.set_validation_message(f"Cannot read file: {str(e)}", "error")
+            openssl_logger.error(f"Keychain dialog: Cannot read Root CA file {path}: {str(e)}")
+            return
+        
+        # Comprehensive OpenSSL validation
+        openssl_logger.info(f"Keychain dialog: Validating Root CA certificate: {path}")
+        self.validate_certificate_with_openssl(path)
+        
+    def validate_certificate_with_openssl(self, cert_path):
+        """Validate certificate using OpenSSL commands with comprehensive checks"""
+        try:
+            # Test 1: Basic certificate parsing
+            openssl_logger.info(f"Keychain dialog: Running basic certificate validation on: {cert_path}")
+            result = run_openssl_command([
+                "openssl", "x509", "-in", cert_path, "-noout", "-text"
+            ], description=f"Validate Root CA certificate format: {os.path.basename(cert_path)}")
+            
+            if result.returncode != 0:
+                self.set_validation_message("Invalid certificate format or corrupted file.", "error")
+                openssl_logger.error(f"Keychain dialog: Root CA certificate format validation failed: {cert_path}")
+                openssl_logger.error(f"OpenSSL error: {result.stderr}")
+                return
+                
+            # Test 2: Get certificate details (subject, issuer, expiry)
+            openssl_logger.info(f"Keychain dialog: Getting certificate details for: {cert_path}")
+            result = run_openssl_command([
+                "openssl", "x509", "-in", cert_path, "-noout", "-subject", "-issuer", "-enddate"
+            ], description=f"Get Root CA certificate details: {os.path.basename(cert_path)}")
+            
+            if result.returncode != 0:
+                self.set_validation_message("Cannot read certificate details.", "error")
+                openssl_logger.error(f"Keychain dialog: Cannot read Root CA certificate details: {cert_path}")
+                return
+                
+            # Parse certificate information
+            output = result.stdout
+            subject = issuer = None
+            enddate_str = None
+            
+            for line in output.splitlines():
+                if line.startswith("subject="):
+                    subject = line[len("subject="):].strip()
+                elif line.startswith("issuer="):
+                    issuer = line[len("issuer="):].strip()
+                elif line.startswith("notAfter="):
+                    enddate_str = line[len("notAfter="):].strip()
+            
+            openssl_logger.info(f"Keychain dialog: Root CA certificate subject: {subject}")
+            openssl_logger.info(f"Keychain dialog: Root CA certificate issuer: {issuer}")
+            openssl_logger.info(f"Keychain dialog: Root CA certificate expires: {enddate_str}")
+            
+            # Test 3: Check expiry date
+            expiry = None
+            if enddate_str:
+                try:
+                    expiry = datetime.strptime(enddate_str, "%b %d %H:%M:%S %Y %Z")
+                    now = datetime.now(timezone.utc)                    
+
+                    if expiry <= now:
+                        self.set_validation_message("Certificate has expired and cannot be used.", "error")
+                        openssl_logger.error(f"Keychain dialog: Root CA certificate expired on {enddate_str}: {cert_path}")
+                        return
+                    elif expiry <= (now + timedelta(days=30)):
+                        # Certificate expires soon - warn but allow
+                        openssl_logger.warning(f"Keychain dialog: Root CA certificate expires soon ({enddate_str}): {cert_path}")
+                        
+                except Exception as e:
+                    openssl_logger.warning(f"Keychain dialog: Could not parse expiry date '{enddate_str}': {str(e)}")
+            
+            # Test 4: Check if it's a multi-certificate file (chain)
+            cert_count = 0
+            try:
+                with open(cert_path, 'r') as f:
+                    content = f.read()
+                    cert_count = content.count("-----BEGIN CERTIFICATE-----")
+            except Exception:
+                cert_count = 1  # Assume single if can't count
+            
+            if cert_count > 1:
+                self.set_validation_message("Root CA file contains multiple certificates (chain). Please select a single root CA certificate.", "error")
+                openssl_logger.error(f"Keychain dialog: Root CA file contains {cert_count} certificates (should be single): {cert_path}")
+                return
+                
+            # Test 5: Verify it's likely a root CA (self-signed)
+            is_self_signed = subject and issuer and (subject == issuer)
+            if not is_self_signed and subject and issuer:
+                # Not self-signed - warn but allow (could be intermediate used as root)
+                openssl_logger.warning(f"Keychain dialog: Certificate is not self-signed (Subject: {subject}, Issuer: {issuer})")
+                openssl_logger.warning(f"Keychain dialog: This may be an intermediate certificate, not a root CA: {cert_path}")
+                
+            # All validations passed
+            self.last_validation_result = {
+                'path': cert_path,
+                'subject': subject,
+                'issuer': issuer,
+                'expiry': expiry,
+                'is_self_signed': is_self_signed
+            }
+            
+            # Set success message
+            if is_self_signed:
+                status_msg = f"✓ Valid root CA certificate\nSubject: {subject}"
+            else:
+                status_msg = f"⚠ Valid certificate (may be intermediate)\nSubject: {subject}\nIssuer: {issuer}"
+                
+            if expiry and expiry <= (datetime.now(timezone.utc) + timedelta(days=30)):
+                status_msg += f"\n⚠ Expires soon: {expiry.strftime('%Y-%m-%d')}"
+            elif expiry:
+                status_msg += f"\nExpires: {expiry.strftime('%Y-%m-%d')}"
+                
+            self.set_validation_message(status_msg, "success" if is_self_signed else "warning")
+            self.ok_button.setEnabled(True)
+            
+            openssl_logger.info(f"Keychain dialog: Root CA certificate validation successful: {cert_path}")
+            
+        except Exception as e:
+            self.set_validation_message(f"Validation error: {str(e)}", "error")
+            openssl_logger.error(f"Keychain dialog: Root CA certificate validation exception for {cert_path}: {str(e)}")
+            
+    def set_validation_message(self, message, status):
+        """Set validation message with appropriate styling"""
+        if status == "success":
+            style = "QLabel { color: green; background-color: #e8f5e8; border: 1px solid green; }"
+        elif status == "warning":
+            style = "QLabel { color: #cc6600; background-color: #fff3cd; border: 1px solid #cc6600; }"
+        elif status == "error":
+            style = "QLabel { color: red; background-color: #f8d7da; border: 1px solid red; }"
+        else:
+            style = "QLabel { color: gray; }"
+            
+        self.validation_label.setText(message)
+        self.validation_label.setStyleSheet(style)
         
     def accept_dialog(self):
         """Accept dialog and store the root CA path"""
-        self.root_ca_path = self.root_ca_edit.text().strip()
-        self.accept()
-        
+        if self.last_validation_result:
+            self.root_ca_path = self.last_validation_result['path']
+            openssl_logger.info(f"Keychain dialog: Root CA certificate accepted: {self.root_ca_path}")
+            self.accept()
+        else:
+            openssl_logger.warning("Keychain dialog: Accept attempted without valid certificate")
+            
     def get_root_ca_path(self):
         """Get the selected root CA path"""
         return self.root_ca_path
-
+        
+    def get_validation_result(self):
+        """Get the full validation result"""
+        return self.last_validation_result
 
 class CAManager(QtWidgets.QMainWindow):
     def __init__(self):
