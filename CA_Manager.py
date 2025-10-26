@@ -288,6 +288,41 @@ def save_last_config_path(config_path):
             f.write(config_path)
     except Exception:
         pass
+def save_root_ca_path(root_ca_path):
+    """Save the last used root CA certificate path to settings"""
+    try:
+        settings_dict = {}
+        
+        # Load existing settings if they exist
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r') as f:
+                content = f.read().strip()
+                if content:
+                    settings_dict['last_config_path'] = content
+        
+        # Add root CA path
+        settings_dict['root_ca_path'] = root_ca_path
+        
+        # Save settings as key-value pairs
+        with open(SETTINGS_FILE, 'w') as f:
+            for key, value in settings_dict.items():
+                f.write(f"{key}={value}\n")
+                
+    except Exception:
+        pass  # Fail silently like other settings functions
+
+def load_root_ca_path():
+    """Load the last used root CA certificate path from settings"""
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('root_ca_path='):
+                        return line[len('root_ca_path='):]
+        except Exception:
+            pass
+    return ""
 
 def load_last_config_path():
     if os.path.exists(SETTINGS_FILE):
@@ -954,12 +989,16 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         self.root_ca_path = ""
         self.last_validation_result = None
         self.setup_ui()
+        self.load_saved_root_ca_path()  # Load saved path
         
     def setup_ui(self):
         """Set up the dialog UI"""
         self.setWindowTitle(f"Create Keychain for {self.cert_name}")
         self.setModal(True)
-        self.resize(500, 280)
+        
+        # Fix geometry issues: use minimum size instead of fixed resize
+        self.setMinimumSize(450, 250)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
         
         layout = QtWidgets.QVBoxLayout()
         
@@ -992,6 +1031,7 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         self.validation_label = QtWidgets.QLabel("")
         self.validation_label.setWordWrap(True)
         self.validation_label.setStyleSheet("QLabel { margin: 5px; padding: 5px; }")
+        self.validation_label.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.MinimumExpanding)
         ca_layout.addWidget(self.validation_label)
         
         ca_group.setLayout(ca_layout)
@@ -1013,10 +1053,26 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         layout.addLayout(button_layout)
         self.setLayout(layout)
         
+    def load_saved_root_ca_path(self):
+        """Load and set the previously saved root CA path"""
+        saved_path = load_root_ca_path()
+        if saved_path and os.path.exists(saved_path):
+            self.root_ca_edit.setText(saved_path)
+            openssl_logger.info(f"Keychain dialog: Loaded saved root CA path: {saved_path}")
+        elif saved_path:
+            # Path was saved but file no longer exists
+            openssl_logger.warning(f"Keychain dialog: Saved root CA path no longer exists: {saved_path}")
+            
     def browse_root_ca(self):
         """Open file dialog to select root CA certificate"""
+        # Start browse from directory of current path if available
+        start_dir = ""
+        current_path = self.root_ca_edit.text().strip()
+        if current_path and os.path.exists(current_path):
+            start_dir = os.path.dirname(current_path)
+        
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select Root CA Certificate", "", 
+            self, "Select Root CA Certificate", start_dir, 
             "Certificate Files (*.pem *.crt *.cer);;All Files (*)"
         )
         
@@ -1185,16 +1241,26 @@ class CreateKeychainDialog(QtWidgets.QDialog):
     def set_validation_message(self, message, status):
         """Set validation message with appropriate styling"""
         if status == "success":
-            style = "QLabel { color: green; background-color: #e8f5e8; border: 1px solid green; }"
+            style = "QLabel { color: green; background-color: #e8f5e8; border: 1px solid green; border-radius: 3px; }"
+            # Save the valid root CA path when validation succeeds
+            if self.last_validation_result:
+                save_root_ca_path(self.last_validation_result['path'])
+                openssl_logger.info(f"Keychain dialog: Saved root CA path to settings: {self.last_validation_result['path']}")
         elif status == "warning":
-            style = "QLabel { color: #cc6600; background-color: #fff3cd; border: 1px solid #cc6600; }"
+            style = "QLabel { color: #cc6600; background-color: #fff3cd; border: 1px solid #cc6600; border-radius: 3px; }"
+            # Also save for warnings (valid but with issues)
+            if self.last_validation_result:
+                save_root_ca_path(self.last_validation_result['path'])
         elif status == "error":
-            style = "QLabel { color: red; background-color: #f8d7da; border: 1px solid red; }"
+            style = "QLabel { color: red; background-color: #f8d7da; border: 1px solid red; border-radius: 3px; }"
         else:
             style = "QLabel { color: gray; }"
             
         self.validation_label.setText(message)
         self.validation_label.setStyleSheet(style)
+        
+        # Ensure the dialog adjusts its size naturally
+        self.adjustSize()
         
     def accept_dialog(self):
         """Accept dialog and store the root CA path"""
