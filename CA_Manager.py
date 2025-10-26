@@ -1120,7 +1120,7 @@ class CreateKeychainDialog(QtWidgets.QDialog):
                     expiry = datetime.strptime(enddate_str, "%b %d %H:%M:%S %Y %Z")
                     expiry = expiry.replace(tzinfo=timezone.utc)  # Make timezone-aware
                     now = datetime.now(timezone.utc)
-                    
+
                     if expiry <= now:
                         self.set_validation_message("Certificate has expired and cannot be used.", "error")
                         openssl_logger.error(f"Keychain dialog: Root CA certificate expired on {enddate_str}: {cert_path}")
@@ -1686,7 +1686,7 @@ class CAManager(QtWidgets.QMainWindow):
             self.load_certificates_list()
 
     def renew_certificate(self):
-        """Handle certificate renewal"""
+        """Handle certificate renewal with comprehensive logging"""
         if not self.ca_config_loaded:
             QtWidgets.QMessageBox.warning(
                 self, 'No CA Configuration',
@@ -1700,119 +1700,199 @@ class CAManager(QtWidgets.QMainWindow):
 
         item = selected_items[0]
         cert_path = item.data(0, QtCore.Qt.UserRole)
+        cert_status = item.data(2, QtCore.Qt.UserRole)
         cert_file = os.path.basename(cert_path)
-        cert_name = os.path.splitext(cert_file.replace('.cert.pem', ''))[0]
-
-        # Get CA private key password
-        ca_password, ok = QtWidgets.QInputDialog.getText(
-            self, 'CA Private Key Password',
-            'Enter the CA private key password for renewal:',
-            QtWidgets.QLineEdit.Password
-        )
-
-        if not ok:
-            return  # User cancelled
+        cert_name = cert_file.replace('.cert.pem', '')
 
         # Show confirmation dialog
         reply = QtWidgets.QMessageBox.question(
             self, 'Renew Certificate',
-            f'Are you sure you want to renew certificate "{cert_file}"?\n\n'
+            f'Are you sure you want to renew certificate "{cert_file}"?\n'
             'This will generate a new certificate with extended validity period.',
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No
         )
+        
+        if reply != QtWidgets.QMessageBox.Yes:
+            openssl_logger.info(f"Certificate renewal cancelled by user for: {cert_name}")
+            return
 
-        if reply == QtWidgets.QMessageBox.Yes:
-            try:
-                openssl_logger.info(f"Starting certificate renewal for: {cert_name}")
-                
-                # Get paths from config
-                config_dir = os.path.dirname(os.path.abspath(self.configPathEdit.text().strip()))
-                ca_section = find_section(self.config, 'ca')
-                default_ca_name = clean_config_value(self.config[ca_section].get('default_ca', ''))
-                default_ca_section = find_section(self.config, default_ca_name)
-
-                # Get directory paths
-                dir_raw = clean_config_value(self.config[default_ca_section].get('dir', '.'))
-                if not os.path.isabs(dir_raw):
-                    base_dir = os.path.normpath(os.path.join(config_dir, dir_raw))
+        ca_password = None
+        try:
+            # Log the start of renewal with separator
+            openssl_logger.info("=" * 80)
+            openssl_logger.info(f"OPERATION: Certificate renewal for {cert_name}")
+            openssl_logger.info(f"CERTIFICATE FILE: {cert_path}")
+            openssl_logger.info(f"CERTIFICATE STATUS: {cert_status}")
+            
+            # Look for existing CSR file
+            config_file = self.configPathEdit.text().strip()
+            config_dir = os.path.dirname(os.path.abspath(config_file))
+            
+            # Get CSR directory from config
+            ca_section = find_section(self.config, 'ca')
+            if not ca_section:
+                raise Exception('CA section not found in config.')
+            
+            default_ca_name = clean_config_value(self.config[ca_section].get('default_ca', ''))
+            default_ca_section = find_section(self.config, default_ca_name)
+            if not default_ca_section:
+                raise Exception(f'Default CA section "{default_ca_name}" not found in config.')
+            
+            # Get and resolve CSR directory
+            dir_raw = clean_config_value(self.config[default_ca_section].get('dir', '.'))
+            if not os.path.isabs(dir_raw):
+                base_dir = os.path.normpath(os.path.join(config_dir, dir_raw))
+            else:
+                base_dir = os.path.normpath(dir_raw)
+            
+            variables = {
+                'dir': base_dir,
+                'config_dir': config_dir
+            }
+            
+            csr_dir_raw = clean_config_value(self.config[default_ca_section].get('new_certs_dir', 'newcerts'))
+            # Often CSRs are in a 'csr' subdirectory, but let's check the actual config
+            # Try common CSR directory patterns
+            possible_csr_dirs = ['csr', 'csrs', 'requests', 'req', base_dir]
+            
+            openssl_logger.info(f"Base directory: {base_dir}")
+            openssl_logger.info(f"Looking for CSR file for certificate: {cert_name}")
+            
+            csr_file = None
+            for csr_dir_name in possible_csr_dirs:
+                if csr_dir_name == base_dir:
+                    test_csr_dir = base_dir
                 else:
-                    base_dir = os.path.normpath(dir_raw)
-
-                csr_dir = os.path.join(base_dir, 'csr')
-                certs_dir = os.path.join(base_dir, clean_config_value(self.config[default_ca_section].get('certs', 'certs')))
+                    test_csr_dir = os.path.join(base_dir, csr_dir_name)
                 
-                # Look for existing CSR file
-                csr_file = os.path.join(csr_dir, f"{cert_name}.csr.pem")
+                test_csr_path = os.path.join(test_csr_dir, f"{cert_name}.csr.pem")
+                openssl_logger.info(f"Checking for CSR at: {test_csr_path}")
                 
-                if not os.path.exists(csr_file):
-                    QtWidgets.QMessageBox.warning(
-                        self, 'CSR Not Found',
-                        f'Certificate Signing Request not found: {csr_file}\n\n'
-                        'Cannot renew certificate without original CSR.'
-                    )
-                    return
-
-                # Create backup of current certificate
-                backup_file = cert_path + f".backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                import shutil
-                shutil.copy2(cert_path, backup_file)
-                openssl_logger.info(f"Created backup: {backup_file}")
-
-                # Renew certificate by re-signing the CSR
-                config_file = self.configPathEdit.text().strip()
-                sign_cmd = [
-                    "openssl", "ca", "-config", config_file, "-days", "375",
-                    "-notext", "-md", "sha256", "-in", csr_file, "-out", cert_path,
-                    "-passin", f"pass:{ca_password}", "-batch"
-                ]
-
-                result = run_openssl_command(sign_cmd, cwd=base_dir, description=f"Renew certificate for {cert_name}")
-                
-                # Clear password from memory
-                ca_password = None
-
-                if result.returncode == 0:
-                    openssl_logger.info(f"Certificate renewal completed successfully for: {cert_name}")
-                    QtWidgets.QMessageBox.information(
-                        self, 'Certificate Renewed Successfully',
-                        f'Certificate "{cert_file}" has been successfully renewed!\n\n'
-                        f'Original certificate backed up to:\n{backup_file}\n\n'
-                        f'New certificate saved to:\n{cert_path}\n\n'
-                        f'Commands logged to:\n{LOG_FILE}'
-                    )
-                    # Refresh certificate list to show updated certificate
-                    self.load_certificates_list()
-                else:
-                    # Restore backup if renewal failed
-                    shutil.move(backup_file, cert_path)
-                    
-                    if "bad decrypt" in result.stderr.lower() or "wrong password" in result.stderr.lower():
-                        QtWidgets.QMessageBox.critical(
-                            self, 'Incorrect Password',
-                            f'Incorrect CA private key password.\n\n'
-                            f'Error: {result.stderr}'
-                        )
-                    else:
-                        QtWidgets.QMessageBox.critical(
-                            self, 'Renewal Failed',
-                            f'Failed to renew certificate "{cert_file}".\n\n'
-                            f'Error:\n{result.stderr}\n\n'
-                            'Original certificate has been restored.\n\n'
-                            f'Check log file: {LOG_FILE}'
-                        )
-
-            except Exception as e:
-                openssl_logger.error(f"Certificate renewal failed for {cert_name}: {str(e)}")
-                QtWidgets.QMessageBox.critical(
-                    self, 'Renewal Error',
-                    f'An error occurred while renewing certificate "{cert_file}":\n\n'
-                    f'{str(e)}\n\n'
-                    f'Check log file: {LOG_FILE}'
+                if os.path.exists(test_csr_path):
+                    csr_file = test_csr_path
+                    openssl_logger.info(f"Found CSR file: {csr_file}")
+                    break
+            
+            if not csr_file:
+                openssl_logger.error(f"CSR file not found for certificate: {cert_name}")
+                openssl_logger.error(f"Searched in directories: {possible_csr_dirs}")
+                QtWidgets.QMessageBox.warning(
+                    self, 'CSR Not Found',
+                    f'Certificate Signing Request not found for "{cert_name}".\n'
+                    'Cannot renew certificate without original CSR.\n\n'
+                    f'Searched in: {base_dir}/[csr|csrs|requests|req]/'
                 )
-            finally:
-                # Ensure password is cleared from memory
-                ca_password = None
+                return
+            
+            # Get CA private key password
+            openssl_logger.info("Requesting CA private key password from user")
+            ca_password, ok = QtWidgets.QInputDialog.getText(
+                self, 'CA Private Key Password',
+                'Enter the CA private key password for renewal:',
+                QtWidgets.QLineEdit.Password
+            )
+            
+            if not ok:
+                openssl_logger.info(f"Certificate renewal cancelled by user (password dialog) for: {cert_name}")
+                return  # User cancelled
+            
+            openssl_logger.info("CA password provided by user")
+            
+            # Create backup of current certificate
+            backup_file = f"{cert_path}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            openssl_logger.info(f"Creating backup of current certificate: {backup_file}")
+            
+            import shutil
+            shutil.copy2(cert_path, backup_file)
+            openssl_logger.info(f"Backup created successfully: {backup_file}")
+            
+            # Prepare OpenSSL command for renewal
+            sign_cmd = [
+                "openssl", "ca", 
+                "-config", config_file,
+                "-days", "375",
+                "-notext", 
+                "-md", "sha256",
+                "-in", csr_file,
+                "-out", cert_path,
+                "-passin", f"pass:{ca_password}",
+                "-batch"
+            ]
+            
+            openssl_logger.info(f"Executing certificate renewal command")
+            openssl_logger.info(f"Command: {' '.join(sign_cmd[:sign_cmd.index('-passin')] + ['-passin', 'pass:***'])}")
+            openssl_logger.info(f"Working directory: {base_dir}")
+            
+            # Execute the OpenSSL command
+            result = run_openssl_command(
+                sign_cmd, 
+                cwd=base_dir,
+                description=f"Renew certificate for {cert_name}"
+            )
+            
+            if result.returncode == 0:
+                openssl_logger.info("=" * 80)
+                openssl_logger.info(f"Certificate renewal completed successfully for: {cert_name}")
+                openssl_logger.info(f"Backup file: {backup_file}")
+                openssl_logger.info(f"New certificate: {cert_path}")
+                openssl_logger.info("=" * 80)
+                openssl_logger.info("")  # Empty line for separation
+                
+                QtWidgets.QMessageBox.information(
+                    self, 'Certificate Renewed Successfully',
+                    f'Certificate "{cert_file}" has been successfully renewed!\n\n'
+                    f'Original certificate backed up to:\n{backup_file}\n\n'
+                    f'New certificate saved to:\n{cert_path}\n\n'
+                    f'Commands logged to:\n{LOG_FILE}'
+                )
+                
+                # Refresh certificate list to show updated certificate
+                openssl_logger.info(f"Refreshing certificate list to show renewed certificate: {cert_name}")
+                self.load_certificates_list()
+            else:
+                # Renewal failed - restore backup
+                openssl_logger.error(f"Certificate renewal failed for: {cert_name}")
+                openssl_logger.error(f"OpenSSL return code: {result.returncode}")
+                openssl_logger.error(f"OpenSSL error output: {result.stderr}")
+                
+                openssl_logger.info(f"Restoring backup certificate: {backup_file} -> {cert_path}")
+                shutil.move(backup_file, cert_path)
+                openssl_logger.info("Backup restored successfully")
+                
+                # Check for common password-related errors
+                if "bad decrypt" in result.stderr.lower() or "wrong password" in result.stderr.lower():
+                    QtWidgets.QMessageBox.critical(
+                        self, 'Incorrect Password',
+                        f'Incorrect CA private key password.\n\n'
+                        f'Error: {result.stderr}\n\n'
+                        'Original certificate has been restored.'
+                    )
+                else:
+                    QtWidgets.QMessageBox.critical(
+                        self, 'Renewal Failed',
+                        f'Failed to renew certificate "{cert_file}".\n\n'
+                        f'Error: {result.stderr}\n\n'
+                        'Original certificate has been restored.\n\n'
+                        f'Check log file: {LOG_FILE}'
+                    )
+                    
+        except Exception as e:
+            openssl_logger.error("=" * 80)
+            openssl_logger.error(f"Certificate renewal failed for {cert_name}: {str(e)}")
+            openssl_logger.error("=" * 80)
+            openssl_logger.error("")  # Empty line for separation
+            
+            QtWidgets.QMessageBox.critical(
+                self, 'Renewal Error',
+                f'An error occurred while renewing certificate "{cert_file}":\n\n{str(e)}\n\n'
+                f'Check log file: {LOG_FILE}'
+            )
+            
+        finally:
+            # Clear password from memory for security
+            ca_password = None
+            openssl_logger.info(f"Certificate renewal process completed for: {cert_name}")
 
     def revoke_certificate(self):
         """Handle certificate revocation"""
@@ -1935,7 +2015,7 @@ class CAManager(QtWidgets.QMainWindow):
         cert_path = item.data(0, QtCore.Qt.UserRole)
         cert_status = item.data(2, QtCore.Qt.UserRole)
         cert_file = os.path.basename(cert_path)
-        cert_name = os.path.splitext(cert_file.replace('.cert.pem', ''))[0]
+        cert_name = cert_file.replace('.cert.pem', '')
 
         # Double check the certificate is valid and not already a keychain
         if cert_status not in ["valid", "warning"]:
