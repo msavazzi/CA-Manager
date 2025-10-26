@@ -1,3 +1,10 @@
+###########################################################################
+# Certificate Authority Manager Application for OpenSSL
+# This module provides utility functions and a dialog class for managing   
+# certificates using OpenSSL, including logging, config parsing, and UI.   
+###########################################################################
+
+
 import configparser
 import os
 import re
