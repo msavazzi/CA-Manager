@@ -218,7 +218,8 @@ def get_certificate_info(cert_path):
         expiry = None
         if enddate_str:
             expiry = datetime.strptime(enddate_str, "%b %d %H:%M:%S %Y %Z")
-        
+            expiry = expiry.replace(tzinfo=timezone.utc)  # Make timezone-aware        
+
         return {"subject": subject, "issuer": issuer, "expiry": expiry}
     except Exception as e:
         return {"error": str(e)}
@@ -1117,8 +1118,9 @@ class CreateKeychainDialog(QtWidgets.QDialog):
             if enddate_str:
                 try:
                     expiry = datetime.strptime(enddate_str, "%b %d %H:%M:%S %Y %Z")
-                    now = datetime.now(timezone.utc)                    
-
+                    expiry = expiry.replace(tzinfo=timezone.utc)  # Make timezone-aware
+                    now = datetime.now(timezone.utc)
+                    
                     if expiry <= now:
                         self.set_validation_message("Certificate has expired and cannot be used.", "error")
                         openssl_logger.error(f"Keychain dialog: Root CA certificate expired on {enddate_str}: {cert_path}")
