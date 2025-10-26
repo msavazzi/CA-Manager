@@ -20,7 +20,7 @@ LOG_FILE = os.path.join(SCRIPT_DIR, "ca_manager_openssl.log")
 
 # Set up logging for OpenSSL commands
 def setup_openssl_logging():
-    """Configure logging for OpenSSL commands and results"""
+    # Configure logging for OpenSSL commands and results
     logger = logging.getLogger('openssl_commands')
     logger.setLevel(logging.INFO)
     
@@ -46,7 +46,7 @@ def setup_openssl_logging():
 openssl_logger = setup_openssl_logging()
 
 def log_openssl_command(command, result, cwd=None, description=""):
-    """Log OpenSSL command execution and results"""
+    # Log OpenSSL command execution and results
     try:
         # Mask passwords in command for logging
         safe_command = []
@@ -89,9 +89,9 @@ def log_openssl_command(command, result, cwd=None, description=""):
         openssl_logger.error(f"Error logging OpenSSL command: {e}")
 
 def run_openssl_command(command, cwd=None, description="", **kwargs):
-    """
-    Execute OpenSSL command with logging
-    """
+    #
+    # Execute OpenSSL command with logging
+    #
     try:
         result = subprocess.run(command, capture_output=True, text=True, cwd=cwd, **kwargs)
         log_openssl_command(command, result, cwd, description)
@@ -109,20 +109,20 @@ def run_openssl_command(command, cwd=None, description="", **kwargs):
         raise
 
 def is_subsection(tag, config):
-    """
-    Check if a given tag matches a section name in the config.
-    The tag is trimmed of spaces and compared case-sensitively.
-    """
+    #
+    # Check if a given tag matches a section name in the config.
+    # The tag is trimmed of spaces and compared case-sensitively.
+    #
     trimmed_tag = tag.strip()
     # Config sections in config.sections() come without brackets,
     # so we compare directly to trimmed_tag
     return trimmed_tag in config.sections()
 
 def build_config_tree(config):
-    """
-    Build a nested tree representation from the config object,
-    recognizing subsections (sections in square brackets) as subtrees.
-    """
+    #
+    # Build a nested tree representation from the config object,
+    # recognizing subsections (sections in square brackets) as subtrees.
+    #
     tree = {}
     for section in config.sections():
         tree[section] = {}
@@ -137,10 +137,10 @@ def build_config_tree(config):
     return tree
 
 def parse_openssl_config(config_path):
-    """
-    Parse an OpenSSL config file, returning both
-    the configparser object and the constructed tree.
-    """
+    #
+    # Parse an OpenSSL config file, returning both
+    # the configparser object and the constructed tree.
+    #
     config = configparser.ConfigParser(strict=False)
     with open(config_path) as f:
         config.read_file(f)
@@ -155,7 +155,7 @@ def find_section(config, name):
     return None
 
 def clean_config_value(value):
-    """Clean config value by removing comments and extra whitespace"""
+    # Clean config value by removing comments and extra whitespace
     if isinstance(value, str):
         if '#' in value:
             value = value.split('#')[0]
@@ -163,7 +163,7 @@ def clean_config_value(value):
     return value
 
 def detect_cert_type(cert_path):
-    """Detect if file contains single certificate or certificate chain"""
+    # Detect if file contains single certificate or certificate chain
     try:
         with open(cert_path, 'r') as f:
             content = f.read()
@@ -173,7 +173,7 @@ def detect_cert_type(cert_path):
         return "single"
 
 def extract_certificates(cert_path):
-    """Extract individual certificates from a chain file"""
+    # Extract individual certificates from a chain file
     try:
         with open(cert_path, 'r') as f:
             content = f.read()
@@ -282,56 +282,59 @@ def get_certificate_san(cert_path):
     except Exception:
         return []
 
-def save_last_config_path(config_path):
-    try:
-        with open(SETTINGS_FILE, "w") as f:
-            f.write(config_path)
-    except Exception:
-        pass
-def save_root_ca_path(root_ca_path):
-    """Save the last used root CA certificate path to settings"""
-    try:
-        settings_dict = {}
-        
-        # Load existing settings if they exist
-        if os.path.exists(SETTINGS_FILE):
+def load_settings():
+    # Load all settings from the settings file
+    settings = {}
+    if os.path.exists(SETTINGS_FILE):
+        try:
             with open(SETTINGS_FILE, 'r') as f:
                 content = f.read().strip()
-                if content:
-                    settings_dict['last_config_path'] = content
-        
-        # Add root CA path
-        settings_dict['root_ca_path'] = root_ca_path
-        
-        # Save settings as key-value pairs
-        with open(SETTINGS_FILE, 'w') as f:
-            for key, value in settings_dict.items():
-                f.write(f"{key}={value}\n")
                 
+                # Handle backward compatibility - if file contains just a path (no =), it's the old format
+                if content and '=' not in content:
+                    # Old format - just config path
+                    settings['last_config_path'] = content
+                else:
+                    # New format - key=value pairs
+                    for line in content.splitlines():
+                        line = line.strip()
+                        if line and '=' in line:
+                            key, value = line.split('=', 1)  # Split on first = only
+                            settings[key.strip()] = value.strip()
+        except Exception:
+            pass  # Fail silently like other settings functions
+    return settings
+
+def save_settings(settings):
+    # Save all settings to the settings file
+    try:
+        with open(SETTINGS_FILE, 'w') as f:
+            for key, value in settings.items():
+                f.write(f"{key}={value}\n")
     except Exception:
         pass  # Fail silently like other settings functions
 
-def load_root_ca_path():
-    """Load the last used root CA certificate path from settings"""
-    if os.path.exists(SETTINGS_FILE):
-        try:
-            with open(SETTINGS_FILE, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith('root_ca_path='):
-                        return line[len('root_ca_path='):]
-        except Exception:
-            pass
-    return ""
+def save_last_config_path(config_path):
+    # Save the last used config path to settings
+    settings = load_settings()
+    settings['last_config_path'] = config_path
+    save_settings(settings)
 
 def load_last_config_path():
-    if os.path.exists(SETTINGS_FILE):
-        try:
-            with open(SETTINGS_FILE, "r") as f:
-                return f.read().strip()
-        except Exception:
-            return ""
-    return ""
+    # Load the last used config path from settings
+    settings = load_settings()
+    return settings.get('last_config_path', '')
+
+def save_root_ca_path(root_ca_path):
+    # Save the last used root CA certificate path to settings
+    settings = load_settings()
+    settings['root_ca_path'] = root_ca_path
+    save_settings(settings)
+
+def load_root_ca_path():
+    # Load the last used root CA certificate path from settings
+    settings = load_settings()
+    return settings.get('root_ca_path', '')
 
 def get_all_linked_sections(config, start_section, visited=None):
     if visited is None:
@@ -371,7 +374,7 @@ def format_sections(config, sections):
     return out
 
 class CertificateItem:
-    """Helper class to store certificate data"""
+    # Helper class to store certificate data
     def __init__(self, cert_path, cert_type, status, subject, issuer, expiry_str, icon):
         self.cert_path = cert_path
         self.cert_type = cert_type
@@ -497,14 +500,14 @@ class NewCertificateDialog(QtWidgets.QDialog):
         self.setLayout(layout)
 
     def toggle_ca_password_visibility(self):
-        """Toggle visibility of CA password field"""
+        # Toggle visibility of CA password field
         if self.show_ca_password_cb.isChecked():
             self.ca_password_edit.setEchoMode(QtWidgets.QLineEdit.Normal)
         else:
             self.ca_password_edit.setEchoMode(QtWidgets.QLineEdit.Password)
 
     def toggle_key_password_visibility(self):
-        """Toggle visibility of key password field"""
+        # Toggle visibility of key password field
         if self.show_key_password_cb.isChecked():
             self.key_password_edit.setEchoMode(QtWidgets.QLineEdit.Normal)
         else:
@@ -592,9 +595,9 @@ class NewCertificateDialog(QtWidgets.QDialog):
             self.matched_section = None
 
     def update_fields_from_matched_section(self, section_name):
-        """
-        Update dialog fields with values from the matched configuration section
-        """
+        #
+        # Update dialog fields with values from the matched configuration section
+        #
         try:
             if section_name not in self.config:
                 return
@@ -629,9 +632,9 @@ class NewCertificateDialog(QtWidgets.QDialog):
             print(f"Error updating fields from section {section_name}: {e}")
 
     def get_dns1_from_section(self, section_name):
-        """
-        Get DNS.1 value from a certificate section by following subjectAltName references
-        """
+        #
+        # Get DNS.1 value from a certificate section by following subjectAltName references
+        #
         try:
             if section_name not in self.config:
                 return ""
@@ -674,7 +677,7 @@ class NewCertificateDialog(QtWidgets.QDialog):
         return ""
 
     def create_certificate(self):
-        """Execute the certificate creation workflow with logging"""
+        # Execute the certificate creation workflow with logging
         cert_name = self.cert_name_edit.text().strip()
         if not cert_name:
             QtWidgets.QMessageBox.warning(self, "Missing Information", "Please enter a certificate name.")
@@ -878,12 +881,12 @@ class NewCertificateDialog(QtWidgets.QDialog):
             self.key_password_edit.clear()
 
     def update_status(self, message):
-        """Update status (you could add a progress bar here)"""
+        # Update status (you could add a progress bar here)
         QtWidgets.QApplication.processEvents()
         # For now, just process events to keep UI responsive
 
 class CreateKeychainDialog(QtWidgets.QDialog):
-    """Dialog for selecting root CA certificate for keychain creation"""
+    # Dialog for selecting root CA certificate for keychain creation
     
     def __init__(self, parent, cert_name):
         super().__init__(parent)
@@ -892,7 +895,7 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         self.setup_ui()
         
     def setup_ui(self):
-        """Set up the dialog UI"""
+        # Set up the dialog UI
         self.setWindowTitle(f"Create Keychain for {self.cert_name}")
         self.setModal(True)
         self.resize(500, 200)
@@ -942,17 +945,26 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         self.setLayout(layout)
         
     def browse_root_ca(self):
-        """Open file dialog to select root CA certificate"""
+        # Open file dialog to select root CA certificate
+        # Start browse from directory of current path if available
+        start_dir = ""
+        current_path = self.root_ca_edit.text().strip()
+        if current_path and os.path.exists(current_path):
+            start_dir = os.path.dirname(current_path)
+        
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select Root CA Certificate", "", 
+            self, "Select Root CA Certificate", start_dir, 
             "Certificate Files (*.pem *.crt *.cer);;All Files (*)"
         )
         
         if file_path:
             self.root_ca_edit.setText(file_path)
+            openssl_logger.info(f"Keychain dialog: Root CA path selected via browse: {file_path}")
+            # Note: The validation will trigger automatically via textChanged signal
+            # and if valid, it will save the path in validate_certificate_with_openssl
             
     def validate_certificate_path(self):
-        """Validate the certificate path and enable/disable OK button"""
+        # Validate the certificate path and enable/disable OK button
         path = self.root_ca_edit.text().strip()
         
         # Check if path exists and is a file
@@ -972,16 +984,16 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         self.ok_button.setEnabled(False)
         
     def accept_dialog(self):
-        """Accept dialog and store the root CA path"""
+        # Accept dialog and store the root CA path
         self.root_ca_path = self.root_ca_edit.text().strip()
         self.accept()
         
     def get_root_ca_path(self):
-        """Get the selected root CA path"""
+        # Get the selected root CA path
         return self.root_ca_path
 
 class CreateKeychainDialog(QtWidgets.QDialog):
-    """Dialog for selecting root CA certificate for keychain creation"""
+    # Dialog for selecting root CA certificate for keychain creation
     
     def __init__(self, parent, cert_name):
         super().__init__(parent)
@@ -992,7 +1004,7 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         self.load_saved_root_ca_path()  # Load saved path
         
     def setup_ui(self):
-        """Set up the dialog UI"""
+        # Set up the dialog UI
         self.setWindowTitle(f"Create Keychain for {self.cert_name}")
         self.setModal(True)
         
@@ -1054,7 +1066,7 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         self.setLayout(layout)
         
     def load_saved_root_ca_path(self):
-        """Load and set the previously saved root CA path"""
+        # Load and set the previously saved root CA path
         saved_path = load_root_ca_path()
         if saved_path and os.path.exists(saved_path):
             self.root_ca_edit.setText(saved_path)
@@ -1064,7 +1076,7 @@ class CreateKeychainDialog(QtWidgets.QDialog):
             openssl_logger.warning(f"Keychain dialog: Saved root CA path no longer exists: {saved_path}")
             
     def browse_root_ca(self):
-        """Open file dialog to select root CA certificate"""
+        # Open file dialog to select root CA certificate
         # Start browse from directory of current path if available
         start_dir = ""
         current_path = self.root_ca_edit.text().strip()
@@ -1080,7 +1092,7 @@ class CreateKeychainDialog(QtWidgets.QDialog):
             self.root_ca_edit.setText(file_path)
             
     def validate_certificate_path(self):
-        """Comprehensive certificate validation with OpenSSL and logging"""
+        # Comprehensive certificate validation with OpenSSL and logging
         path = self.root_ca_edit.text().strip()
         
         # Clear previous validation state
@@ -1127,7 +1139,7 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         self.validate_certificate_with_openssl(path)
         
     def validate_certificate_with_openssl(self, cert_path):
-        """Validate certificate using OpenSSL commands with comprehensive checks"""
+        # Validate certificate using OpenSSL commands with comprehensive checks
         try:
             # Test 1: Basic certificate parsing
             openssl_logger.info(f"Keychain dialog: Running basic certificate validation on: {cert_path}")
@@ -1218,6 +1230,10 @@ class CreateKeychainDialog(QtWidgets.QDialog):
                 'is_self_signed': is_self_signed
             }
             
+            # SAVE THE PATH IMMEDIATELY when validation succeeds
+            save_root_ca_path(cert_path)
+            openssl_logger.info(f"Keychain dialog: Root CA path saved to settings: {cert_path}")
+            
             # Set success message
             if is_self_signed:
                 status_msg = f"✓ Valid root CA certificate\nSubject: {subject}"
@@ -1239,18 +1255,11 @@ class CreateKeychainDialog(QtWidgets.QDialog):
             openssl_logger.error(f"Keychain dialog: Root CA certificate validation exception for {cert_path}: {str(e)}")
             
     def set_validation_message(self, message, status):
-        """Set validation message with appropriate styling"""
+        # Set validation message with appropriate styling
         if status == "success":
             style = "QLabel { color: green; background-color: #e8f5e8; border: 1px solid green; border-radius: 3px; }"
-            # Save the valid root CA path when validation succeeds
-            if self.last_validation_result:
-                save_root_ca_path(self.last_validation_result['path'])
-                openssl_logger.info(f"Keychain dialog: Saved root CA path to settings: {self.last_validation_result['path']}")
         elif status == "warning":
             style = "QLabel { color: #cc6600; background-color: #fff3cd; border: 1px solid #cc6600; border-radius: 3px; }"
-            # Also save for warnings (valid but with issues)
-            if self.last_validation_result:
-                save_root_ca_path(self.last_validation_result['path'])
         elif status == "error":
             style = "QLabel { color: red; background-color: #f8d7da; border: 1px solid red; border-radius: 3px; }"
         else:
@@ -1262,8 +1271,11 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         # Ensure the dialog adjusts its size naturally
         self.adjustSize()
         
+        # Note: Root CA path saving is now handled in validate_certificate_with_openssl()
+        # when validation succeeds, not here in the UI update
+        
     def accept_dialog(self):
-        """Accept dialog and store the root CA path"""
+        # Accept dialog and store the root CA path
         if self.last_validation_result:
             self.root_ca_path = self.last_validation_result['path']
             openssl_logger.info(f"Keychain dialog: Root CA certificate accepted: {self.root_ca_path}")
@@ -1272,11 +1284,11 @@ class CreateKeychainDialog(QtWidgets.QDialog):
             openssl_logger.warning("Keychain dialog: Accept attempted without valid certificate")
             
     def get_root_ca_path(self):
-        """Get the selected root CA path"""
+        # Get the selected root CA path
         return self.root_ca_path
         
     def get_validation_result(self):
-        """Get the full validation result"""
+        # Get the full validation result
         return self.last_validation_result
 
 class CAManager(QtWidgets.QMainWindow):
@@ -1418,7 +1430,7 @@ class CAManager(QtWidgets.QMainWindow):
         self.create_menu_bar()
 
     def create_menu_bar(self):
-        """Create menu bar with logging options"""
+        # Create menu bar with logging options
         menubar = self.menuBar()
         
         # Tools menu
@@ -1435,7 +1447,7 @@ class CAManager(QtWidgets.QMainWindow):
         tools_menu.addAction(clear_log_action)
 
     def view_openssl_log(self):
-        """Show OpenSSL log in a dialog"""
+        # Show OpenSSL log in a dialog
         if not os.path.exists(LOG_FILE):
             QtWidgets.QMessageBox.information(
                 self, 'No Log File', 
@@ -1489,7 +1501,7 @@ class CAManager(QtWidgets.QMainWindow):
             )
 
     def open_file_location(self, file_path):
-        """Open the file location in the system file manager"""
+        # Open the file location in the system file manager
         try:
             import platform
             system = platform.system()
@@ -1507,7 +1519,7 @@ class CAManager(QtWidgets.QMainWindow):
             )
 
     def clear_openssl_log(self):
-        """Clear the OpenSSL log file"""
+        # Clear the OpenSSL log file
         reply = QtWidgets.QMessageBox.question(
             self, 'Clear Log File',
             f'Are you sure you want to clear the OpenSSL log file?\n\n{LOG_FILE}',
@@ -1541,7 +1553,7 @@ class CAManager(QtWidgets.QMainWindow):
             self.configPathEdit.setText(file_path)
 
     def set_ca_buttons_enabled(self, enabled):
-        """Enable or disable all CA-related buttons"""
+        # Enable or disable all CA-related buttons
         self.newCertButton.setEnabled(enabled)
         if not enabled:
             # If CA config not loaded, disable all buttons
@@ -1659,7 +1671,7 @@ class CAManager(QtWidgets.QMainWindow):
         self.filter_certificates()
 
     def filter_certificates(self):
-        """Filter certificates based on checkbox states"""
+        # Filter certificates based on checkbox states
         self.certsTree.clear()
 
         hide_expired = self.hideExpiredCheckbox.isChecked()
@@ -1698,7 +1710,7 @@ class CAManager(QtWidgets.QMainWindow):
             self.filterStatsLabel.setText(f"Showing {shown_count}/{total_certs} certs ({expired_count} expired, {invalid_count} invalid)")
 
     def on_cert_selection_changed(self):
-        """Handle certificate selection changes to enable/disable buttons"""
+        # Handle certificate selection changes to enable/disable buttons
         # Only handle selection if CA config is loaded
         if not self.ca_config_loaded:
             return
@@ -1731,7 +1743,7 @@ class CAManager(QtWidgets.QMainWindow):
             self.keychainButton.setEnabled(False)
 
     def new_certificate(self):
-        """Handle new certificate creation"""
+        # Handle new certificate creation
         if not self.ca_config_loaded:
             QtWidgets.QMessageBox.warning(
                 self, 'No CA Configuration',
@@ -1752,7 +1764,7 @@ class CAManager(QtWidgets.QMainWindow):
             self.load_certificates_list()
 
     def renew_certificate(self):
-        """Handle certificate renewal with comprehensive logging"""
+        # Handle certificate renewal with comprehensive logging
         if not self.ca_config_loaded:
             QtWidgets.QMessageBox.warning(
                 self, 'No CA Configuration',
@@ -1961,7 +1973,7 @@ class CAManager(QtWidgets.QMainWindow):
             openssl_logger.info(f"Certificate renewal process completed for: {cert_name}")
 
     def revoke_certificate(self):
-        """Handle certificate revocation"""
+        # Handle certificate revocation
         if not self.ca_config_loaded:
             QtWidgets.QMessageBox.warning(
                 self, 'No CA Configuration',
@@ -2065,7 +2077,7 @@ class CAManager(QtWidgets.QMainWindow):
                 password = None
 
     def create_keychain(self):
-        """Handle keychain creation with custom dialog and comprehensive logging"""
+        # Handle keychain creation with custom dialog and comprehensive logging
         if not self.ca_config_loaded:
             QtWidgets.QMessageBox.warning(
                 self, 'No CA Configuration',
