@@ -847,6 +847,203 @@ class NewCertificateDialog(QtWidgets.QDialog):
         QtWidgets.QApplication.processEvents()
         # For now, just process events to keep UI responsive
 
+class CreateKeychainDialog(QtWidgets.QDialog):
+    """Dialog for selecting root CA certificate for keychain creation"""
+    
+    def __init__(self, parent, cert_name):
+        super().__init__(parent)
+        self.cert_name = cert_name
+        self.root_ca_path = ""
+        self.setup_ui()
+        
+    def setup_ui(self):
+        """Set up the dialog UI"""
+        self.setWindowTitle(f"Create Keychain for {self.cert_name}")
+        self.setModal(True)
+        self.resize(500, 200)
+        
+        layout = QtWidgets.QVBoxLayout()
+        
+        # Info label
+        info_label = QtWidgets.QLabel(
+            f"Creating keychain for certificate: {self.cert_name}\n\n"
+            "Select the root CA certificate to complete the certificate chain:"
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        # Root CA certificate selection group
+        ca_group = QtWidgets.QGroupBox("Root CA Certificate")
+        ca_layout = QtWidgets.QHBoxLayout()
+        
+        # Text box for certificate path
+        self.root_ca_edit = QtWidgets.QLineEdit()
+        self.root_ca_edit.setPlaceholderText("Path to root CA certificate file...")
+        self.root_ca_edit.textChanged.connect(self.validate_certificate_path)
+        ca_layout.addWidget(self.root_ca_edit)
+        
+        # Browse button
+        self.browse_button = QtWidgets.QPushButton("Browse")
+        self.browse_button.clicked.connect(self.browse_root_ca)
+        ca_layout.addWidget(self.browse_button)
+        
+        ca_group.setLayout(ca_layout)
+        layout.addWidget(ca_group)
+        
+        # Button layout
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.addStretch()
+        
+        self.ok_button = QtWidgets.QPushButton("OK")
+        self.ok_button.setEnabled(False)  # Disabled until valid cert selected
+        self.ok_button.clicked.connect(self.accept_dialog)
+        button_layout.addWidget(self.ok_button)
+        
+        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.cancel_button)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+        
+    def browse_root_ca(self):
+        """Open file dialog to select root CA certificate"""
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select Root CA Certificate", "", 
+            "Certificate Files (*.pem *.crt *.cer);;All Files (*)"
+        )
+        
+        if file_path:
+            self.root_ca_edit.setText(file_path)
+            
+    def validate_certificate_path(self):
+        """Validate the certificate path and enable/disable OK button"""
+        path = self.root_ca_edit.text().strip()
+        
+        # Check if path exists and is a file
+        if path and os.path.exists(path) and os.path.isfile(path):
+            # Basic validation - check if it looks like a certificate file
+            try:
+                with open(path, 'r') as f:
+                    content = f.read()
+                    # Check for certificate markers
+                    if "-----BEGIN CERTIFICATE-----" in content and "-----END CERTIFICATE-----" in content:
+                        self.ok_button.setEnabled(True)
+                        return
+            except Exception:
+                pass
+        
+        # If we get here, the path is invalid
+        self.ok_button.setEnabled(False)
+        
+    def accept_dialog(self):
+        """Accept dialog and store the root CA path"""
+        self.root_ca_path = self.root_ca_edit.text().strip()
+        self.accept()
+        
+    def get_root_ca_path(self):
+        """Get the selected root CA path"""
+        return self.root_ca_path
+
+class CreateKeychainDialog(QtWidgets.QDialog):
+    """Dialog for selecting root CA certificate for keychain creation"""
+    
+    def __init__(self, parent, cert_name):
+        super().__init__(parent)
+        self.cert_name = cert_name
+        self.root_ca_path = ""
+        self.setup_ui()
+        
+    def setup_ui(self):
+        """Set up the dialog UI"""
+        self.setWindowTitle(f"Create Keychain for {self.cert_name}")
+        self.setModal(True)
+        self.resize(500, 200)
+        
+        layout = QtWidgets.QVBoxLayout()
+        
+        # Info label
+        info_label = QtWidgets.QLabel(
+            f"Creating keychain for certificate: {self.cert_name}\n\n"
+            "Select the root CA certificate to complete the certificate chain:"
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        # Root CA certificate selection group
+        ca_group = QtWidgets.QGroupBox("Root CA Certificate")
+        ca_layout = QtWidgets.QHBoxLayout()
+        
+        # Text box for certificate path
+        self.root_ca_edit = QtWidgets.QLineEdit()
+        self.root_ca_edit.setPlaceholderText("Path to root CA certificate file...")
+        self.root_ca_edit.textChanged.connect(self.validate_certificate_path)
+        ca_layout.addWidget(self.root_ca_edit)
+        
+        # Browse button
+        self.browse_button = QtWidgets.QPushButton("Browse")
+        self.browse_button.clicked.connect(self.browse_root_ca)
+        ca_layout.addWidget(self.browse_button)
+        
+        ca_group.setLayout(ca_layout)
+        layout.addWidget(ca_group)
+        
+        # Button layout
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.addStretch()
+        
+        self.ok_button = QtWidgets.QPushButton("OK")
+        self.ok_button.setEnabled(False)  # Disabled until valid cert selected
+        self.ok_button.clicked.connect(self.accept_dialog)
+        button_layout.addWidget(self.ok_button)
+        
+        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.cancel_button)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+        
+    def browse_root_ca(self):
+        """Open file dialog to select root CA certificate"""
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select Root CA Certificate", "", 
+            "Certificate Files (*.pem *.crt *.cer);;All Files (*)"
+        )
+        
+        if file_path:
+            self.root_ca_edit.setText(file_path)
+            
+    def validate_certificate_path(self):
+        """Validate the certificate path and enable/disable OK button"""
+        path = self.root_ca_edit.text().strip()
+        
+        # Check if path exists and is a file
+        if path and os.path.exists(path) and os.path.isfile(path):
+            # Basic validation - check if it looks like a certificate file
+            try:
+                with open(path, 'r') as f:
+                    content = f.read()
+                    # Check for certificate markers
+                    if "-----BEGIN CERTIFICATE-----" in content and "-----END CERTIFICATE-----" in content:
+                        self.ok_button.setEnabled(True)
+                        return
+            except Exception:
+                pass
+        
+        # If we get here, the path is invalid
+        self.ok_button.setEnabled(False)
+        
+    def accept_dialog(self):
+        """Accept dialog and store the root CA path"""
+        self.root_ca_path = self.root_ca_edit.text().strip()
+        self.accept()
+        
+    def get_root_ca_path(self):
+        """Get the selected root CA path"""
+        return self.root_ca_path
+
+
 class CAManager(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -929,6 +1126,12 @@ class CAManager(QtWidgets.QMainWindow):
         self.revokeButton.setToolTip("Revoke the selected certificate (requires CA config)")
         self.revokeButton.clicked.connect(self.revoke_certificate)
         buttons_layout.addWidget(self.revokeButton)
+
+        self.keychainButton = QtWidgets.QPushButton("Create Keychain")
+        self.keychainButton.setEnabled(False) # Disabled until valid cert selected
+        self.keychainButton.setToolTip("Create keychain file (selected cert + intermediate + root CA)")
+        self.keychainButton.clicked.connect(self.create_keychain)
+        buttons_layout.addWidget(self.keychainButton)
 
         buttons_layout.addStretch()  # Push buttons to top
         cert_list_layout.addLayout(buttons_layout)
@@ -1109,7 +1312,8 @@ class CAManager(QtWidgets.QMainWindow):
             # If CA config not loaded, disable all buttons
             self.renewButton.setEnabled(False)
             self.revokeButton.setEnabled(False)
-        # If enabled, let on_cert_selection_changed handle renew/revoke based on selection
+            self.keychainButton.setEnabled(False)
+        # If enabled, let on_cert_selection_changed handle button states based on selection
 
     def load_config_and_certs(self):
         config_path = self.configPathEdit.text().strip()
@@ -1265,26 +1469,31 @@ class CAManager(QtWidgets.QMainWindow):
             return
 
         selected_items = self.certsTree.selectedItems()
-
         if len(selected_items) == 1:
             item = selected_items[0]
             cert_type = item.data(1, QtCore.Qt.UserRole)
             cert_status = item.data(2, QtCore.Qt.UserRole)
+            cert_file = item.text(1)
 
             # Enable buttons only for single certificates, not chains
             is_single_cert = cert_type == "single"
-
+            
             # Renew button: active for single certificates (regardless of expiry)
             self.renewButton.setEnabled(is_single_cert)
-
+            
             # Revoke button: active only for single, non-expired certificates
             is_non_expired = cert_status not in ["expired", "invalid"]
             self.revokeButton.setEnabled(is_single_cert and is_non_expired)
+            
+            # Keychain button: active only for valid single certificates that aren't already keychains
+            is_valid_cert = cert_status in ["valid", "warning"]  # Include warning (expiring soon)
+            is_not_keychain = not cert_file.startswith("keychain.")
+            self.keychainButton.setEnabled(is_single_cert and is_valid_cert and is_not_keychain)
         else:
-            # No selection or multiple selections - disable renew/revoke buttons
-            # (but keep new cert button enabled since it doesn't require selection)
+            # No selection or multiple selections - disable all action buttons
             self.renewButton.setEnabled(False)
             self.revokeButton.setEnabled(False)
+            self.keychainButton.setEnabled(False)
 
     def new_certificate(self):
         """Handle new certificate creation"""
@@ -1540,6 +1749,183 @@ class CAManager(QtWidgets.QMainWindow):
                 # Ensure password is cleared from memory
                 password = None
 
+    def create_keychain(self):
+        """Handle keychain creation with custom dialog and comprehensive logging"""
+        if not self.ca_config_loaded:
+            QtWidgets.QMessageBox.warning(
+                self, 'No CA Configuration',
+                'Please load a CA configuration file first.'
+            )
+            return
+
+        selected_items = self.certsTree.selectedItems()
+        if len(selected_items) != 1:
+            return
+
+        item = selected_items[0]
+        cert_path = item.data(0, QtCore.Qt.UserRole)
+        cert_status = item.data(2, QtCore.Qt.UserRole)
+        cert_file = os.path.basename(cert_path)
+        cert_name = os.path.splitext(cert_file.replace('.cert.pem', ''))[0]
+
+        # Double check the certificate is valid and not already a keychain
+        if cert_status not in ["valid", "warning"]:
+            openssl_logger.warning(f"Keychain creation refused - invalid certificate status: {cert_file} ({cert_status})")
+            QtWidgets.QMessageBox.warning(
+                self, 'Invalid Certificate',
+                f'Cannot create keychain for certificate "{cert_file}" because it is {cert_status}.'
+            )
+            return
+
+        if cert_file.startswith("keychain."):
+            openssl_logger.warning(f"Keychain creation refused - already a keychain: {cert_file}")
+            QtWidgets.QMessageBox.warning(
+                self, 'Already a Keychain',
+                f'The selected file "{cert_file}" is already a keychain file.'
+            )
+            return
+
+        # Show custom dialog to get root CA certificate
+        openssl_logger.info(f"Starting keychain creation process for: {cert_name}")
+        openssl_logger.info(f"Selected certificate: {cert_path}")
+        
+        dialog = CreateKeychainDialog(self, cert_name)
+        if dialog.exec_() != QtWidgets.QDialog.Accepted:
+            openssl_logger.info(f"Keychain creation cancelled by user for: {cert_name}")
+            return
+        
+        root_ca_path = dialog.get_root_ca_path()
+        openssl_logger.info(f"Root CA certificate selected: {root_ca_path}")
+
+        try:
+            # Log the start of keychain creation
+            openssl_logger.info("=" * 80)
+            openssl_logger.info(f"OPERATION: Create keychain for {cert_name}")
+            openssl_logger.info(f"CERTIFICATE: {cert_path}")
+            openssl_logger.info(f"ROOT CA: {root_ca_path}")
+            
+            # Get intermediate certificate path from config
+            ca_section = find_section(self.config, 'ca')
+            if not ca_section:
+                raise Exception('CA section not found in config.')
+            
+            default_ca_name = clean_config_value(self.config[ca_section].get('default_ca', ''))
+            openssl_logger.info(f"Default CA name from config: {default_ca_name}")
+            
+            default_ca_section = find_section(self.config, default_ca_name)
+            if not default_ca_section:
+                raise Exception(f'Default CA section "{default_ca_name}" not found in config.')
+            
+            # Get intermediate certificate path
+            intermediate_cert_raw = clean_config_value(self.config[default_ca_section].get('certificate', ''))
+            if not intermediate_cert_raw:
+                raise Exception('Intermediate certificate path not found in CA config.')
+            
+            openssl_logger.info(f"Intermediate certificate (raw path): {intermediate_cert_raw}")
+            
+            # Resolve intermediate certificate path
+            config_dir = os.path.dirname(os.path.abspath(self.configPathEdit.text().strip()))
+            dir_raw = clean_config_value(self.config[default_ca_section].get('dir', '.'))
+            
+            if not os.path.isabs(dir_raw):
+                base_dir = os.path.normpath(os.path.join(config_dir, dir_raw))
+            else:
+                base_dir = os.path.normpath(dir_raw)
+            
+            variables = {
+                'dir': base_dir,
+                'config_dir': config_dir
+            }
+            
+            openssl_logger.info(f"Base directory: {base_dir}")
+            openssl_logger.info(f"Config directory: {config_dir}")
+            
+            intermediate_cert_path = resolve_path(intermediate_cert_raw, variables)
+            if not os.path.isabs(intermediate_cert_path):
+                intermediate_cert_path = os.path.join(base_dir, intermediate_cert_path)
+            
+            openssl_logger.info(f"Intermediate certificate (resolved): {intermediate_cert_path}")
+            
+            # Verify all certificate files exist
+            if not os.path.exists(cert_path):
+                raise Exception(f'Selected certificate not found: {cert_path}')
+            if not os.path.exists(intermediate_cert_path):
+                raise Exception(f'Intermediate certificate not found: {intermediate_cert_path}')
+            if not os.path.exists(root_ca_path):
+                raise Exception(f'Root CA certificate not found: {root_ca_path}')
+            
+            openssl_logger.info("All certificate files verified and exist")
+            
+            # Create keychain file path
+            keychain_filename = f"keychain.{cert_name}.cert.pem"
+            keychain_path = os.path.join(self.certs_dir, keychain_filename)
+            
+            openssl_logger.info(f"Target keychain file: {keychain_path}")
+            
+            # Read certificate contents and log file sizes
+            with open(cert_path, 'r') as f:
+                selected_cert_content = f.read().strip()
+            openssl_logger.info(f"Selected certificate read: {len(selected_cert_content)} characters")
+            
+            with open(intermediate_cert_path, 'r') as f:
+                intermediate_cert_content = f.read().strip()
+            openssl_logger.info(f"Intermediate certificate read: {len(intermediate_cert_content)} characters")
+            
+            with open(root_ca_path, 'r') as f:
+                root_ca_content = f.read().strip()
+            openssl_logger.info(f"Root CA certificate read: {len(root_ca_content)} characters")
+            
+            # Create keychain content (selected cert + intermediate + root CA)
+            keychain_content = selected_cert_content + '\n' + intermediate_cert_content + '\n' + root_ca_content + '\n'
+            total_length = len(keychain_content)
+            
+            openssl_logger.info(f"Keychain content prepared: {total_length} total characters")
+            openssl_logger.info("Keychain structure: Selected Certificate + Intermediate Certificate + Root CA Certificate")
+            
+            # Write keychain file
+            openssl_logger.info(f"Writing keychain file to: {keychain_path}")
+            with open(keychain_path, 'w') as f:
+                f.write(keychain_content)
+            
+            # Verify the file was written
+            if os.path.exists(keychain_path):
+                file_size = os.path.getsize(keychain_path)
+                openssl_logger.info(f"Keychain file written successfully: {file_size} bytes")
+            else:
+                raise Exception("Keychain file was not created successfully")
+            
+            openssl_logger.info("=" * 80)
+            openssl_logger.info(f"Keychain creation completed successfully: {keychain_filename}")
+            openssl_logger.info("=" * 80)
+            openssl_logger.info("")  # Empty line for separation
+            
+            # Success message
+            QtWidgets.QMessageBox.information(
+                self, 'Keychain Created Successfully',
+                f'Keychain file "{keychain_filename}" has been created successfully!\n\n'
+                f'Location: {keychain_path}\n\n'
+                f'Contents:\n'
+                f'• Selected Certificate: {os.path.basename(cert_path)}\n'
+                f'• Intermediate Certificate: {os.path.basename(intermediate_cert_path)}\n'
+                f'• Root CA Certificate: {os.path.basename(root_ca_path)}\n\n'
+                f'Operation logged to:\n{LOG_FILE}'
+            )
+            
+            # Refresh certificate list to show new keychain file
+            openssl_logger.info(f"Refreshing certificate list to show new keychain: {keychain_filename}")
+            self.load_certificates_list()
+            
+        except Exception as e:
+            openssl_logger.error("=" * 80)
+            openssl_logger.error(f"Keychain creation failed for {cert_name}: {str(e)}")
+            openssl_logger.error("=" * 80)
+            openssl_logger.error("")  # Empty line for separation
+            
+            QtWidgets.QMessageBox.critical(
+                self, 'Keychain Creation Failed',
+                f'Failed to create keychain for certificate "{cert_file}":\n\n{str(e)}\n\n'
+                f'Check log file for details:\n{LOG_FILE}'
+            )
     def show_cert_details(self, item, column):
         cert_path = item.data(0, QtCore.Qt.UserRole)
         cert_type = item.data(1, QtCore.Qt.UserRole)
