@@ -375,7 +375,7 @@ def format_sections(config, sections):
 
 def create_custom_message_box(parent, title, text, message_type, operation_type="default", 
                              buttons=QtWidgets.QMessageBox.Ok, default_button=None):
-    """Create a message box with custom title bar icon, standard internal icon, and configurable buttons"""
+    # Create a message box with custom title bar icon, standard internal icon, and configurable buttons
     msg_box = QtWidgets.QMessageBox(parent)
     msg_box.setWindowTitle(title)
     msg_box.setText(text)
@@ -1038,25 +1038,6 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         layout.addLayout(button_layout)
         self.setLayout(layout)
         
-    def browse_root_ca(self):
-        # Open file dialog to select root CA certificate
-        # Start browse from directory of current path if available
-        start_dir = ""
-        current_path = self.root_ca_edit.text().strip()
-        if current_path and os.path.exists(current_path):
-            start_dir = os.path.dirname(current_path)
-        
-        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select Root CA Certificate", start_dir, 
-            "Certificate Files (*.pem *.crt *.cer);;All Files (*)"
-        )
-        
-        if file_path:
-            self.root_ca_edit.setText(file_path)
-            openssl_logger.info(f"Keychain dialog: Root CA path selected via browse: {file_path}")
-            # Note: The validation will trigger automatically via textChanged signal
-            # and if valid, it will save the path in validate_certificate_with_openssl
-            
     def validate_certificate_path(self):
         # Validate the certificate path and enable/disable OK button
         path = self.root_ca_edit.text().strip()
@@ -1181,21 +1162,48 @@ class CreateKeychainDialog(QtWidgets.QDialog):
             openssl_logger.warning(f"Keychain dialog: Saved root CA path no longer exists: {saved_path}")
             
     def browse_root_ca(self):
-        # Open file dialog to select root CA certificate
+        # Open file dialog to select root CA certificate with custom icon
         # Start browse from directory of current path if available
         start_dir = ""
         current_path = self.root_ca_edit.text().strip()
         if current_path and os.path.exists(current_path):
             start_dir = os.path.dirname(current_path)
         
-        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select Root CA Certificate", start_dir, 
-            "Certificate Files (*.pem *.crt *.cer);;All Files (*)"
-        )
+        # Create custom file dialog - FORCE NON-NATIVE MODE
+        file_dialog = QtWidgets.QFileDialog(self)
+        file_dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)  # KEY LINE!
+        file_dialog.setWindowTitle("Select Root CA Certificate")
+        file_dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        file_dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptOpen)
+        file_dialog.setNameFilter("Certificate Files (*.pem *.crt *.cer);;All Files (*)")
         
-        if file_path:
-            self.root_ca_edit.setText(file_path)
-            
+        # Set the starting directory if available
+        if start_dir:
+            file_dialog.setDirectory(start_dir)
+        
+        # Set custom icon AFTER setting non-native mode
+        icon_path = os.path.join(SCRIPT_DIR, "key-change.svg")
+        if os.path.exists(icon_path):
+            try:
+                icon = QtGui.QIcon(icon_path)
+                if not icon.isNull():
+                    file_dialog.setWindowIcon(icon)
+                    openssl_logger.info(f"File dialog icon loaded successfully: {icon_path}")
+                else:
+                    openssl_logger.warning(f"File dialog icon is null: {icon_path}")
+            except Exception as e:
+                openssl_logger.warning(f"Failed to set file dialog icon: {str(e)}")
+        else:
+            openssl_logger.warning(f"File dialog icon file not found: {icon_path}")
+        
+        # Execute dialog and get result
+        if file_dialog.exec_() == QtWidgets.QDialog.Accepted:
+            selected_files = file_dialog.selectedFiles()
+            if selected_files:
+                file_path = selected_files[0]
+                self.root_ca_edit.setText(file_path)
+                openssl_logger.info(f"Keychain dialog: Root CA path selected via browse: {file_path}")
+
     def validate_certificate_path(self):
         # Comprehensive certificate validation with OpenSSL and logging
         path = self.root_ca_edit.text().strip()
@@ -1397,7 +1405,7 @@ class CreateKeychainDialog(QtWidgets.QDialog):
         return self.last_validation_result
 
 class PasswordDialog(QtWidgets.QDialog):
-    """Custom password input dialog with custom icon"""
+    # Custom password input dialog with custom icon
     
     def __init__(self, parent, title, message, operation_type="default"):
         super().__init__(parent)
@@ -1415,7 +1423,7 @@ class PasswordDialog(QtWidgets.QDialog):
         self.setup_ui(title, message, icon_path)
         
     def setup_ui(self, title, message, icon_path):
-        """Set up the password dialog UI"""
+        # Set up the password dialog UI
         self.setWindowTitle(title)
         self.setModal(True)
         self.setMinimumSize(350, 150)
@@ -1461,12 +1469,12 @@ class PasswordDialog(QtWidgets.QDialog):
         self.password_edit.setFocus()
         
     def accept_password(self):
-        """Accept the password and close dialog"""
+        # Accept the password and close dialog
         self.password = self.password_edit.text()
         self.accept()
         
     def get_password(self):
-        """Get the entered password"""
+        # Get the entered password
         return self.password
 
 class CAManager(QtWidgets.QMainWindow):
@@ -1763,12 +1771,55 @@ class CAManager(QtWidgets.QMainWindow):
         event.accept()
 
     def browse_file(self):
-        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select OpenSSL CA Config File", "", "Config Files (*.cnf *.conf);;All Files (*)"
-        )
+        # Get current config path from the text field
+        current_config_path = self.configPathEdit.text().strip()
 
-        if file_path:
-            self.configPathEdit.setText(file_path)
+        # Create custom file dialog instead of using static method
+        file_dialog = QtWidgets.QFileDialog(self)
+        file_dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)  # KEY LINE!
+        file_dialog.setWindowTitle("Select OpenSSL CA Config File")
+        file_dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        file_dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptOpen)
+        file_dialog.setNameFilter("Config Files (*.cnf *.conf);;All Files (*)")
+
+        # Set default directory and file based on current config path
+        if current_config_path:
+            if os.path.exists(current_config_path) and os.path.isfile(current_config_path):
+                # File exists - set directory and pre-select the file
+                config_dir = os.path.dirname(current_config_path)
+                config_file = os.path.basename(current_config_path)
+                
+                file_dialog.setDirectory(config_dir)
+                file_dialog.selectFile(config_file)  # Pre-select current file
+                openssl_logger.info(f"Config dialog: Pre-selected current file: {current_config_path}")
+                
+            elif os.path.exists(os.path.dirname(current_config_path)):
+                # File doesn't exist but directory does - set directory only
+                config_dir = os.path.dirname(current_config_path)
+                file_dialog.setDirectory(config_dir)
+                openssl_logger.info(f"Config dialog: Set directory from invalid file path: {config_dir}")
+                
+            else:
+                openssl_logger.info("Config dialog: Current config path is invalid, using default location")
+        else:
+            openssl_logger.info("Config dialog: No current config path, using default location")
+        
+        # Set custom icon for the file dialog
+        icon_path = os.path.join(SCRIPT_DIR, "key-chain.svg")
+        if os.path.exists(icon_path):
+            try:
+                file_dialog.setWindowIcon(QtGui.QIcon(icon_path))
+                openssl_logger.info(f"File dialog icon set: {icon_path}")
+            except Exception as e:
+                openssl_logger.warning(f"Failed to set file dialog icon: {str(e)}")
+        
+        # Execute dialog and get result
+        if file_dialog.exec_() == QtWidgets.QDialog.Accepted:
+            selected_files = file_dialog.selectedFiles()
+            if selected_files:
+                file_path = selected_files[0]
+                self.configPathEdit.setText(file_path)
+                openssl_logger.info(f"CA Configuration dialog: Root CA path selected via browse: {file_path}")
 
     def set_ca_buttons_enabled(self, enabled):
         # Enable or disable all CA-related buttons
