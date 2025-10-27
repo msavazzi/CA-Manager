@@ -233,21 +233,21 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## Author
-
-Massimo Savazzi  
-Email: massimo@savazzi.eu  
-GitHub: [msavazzi](https://github.com/msavazzi)
-
-# Icons: Apache 2.0
+### Icons: Apache 2.0
 Some of the icons are redistributed under the Apache 2.0 license. All other
 icons are either redistributed under their respective licenses or are
 distributed under the Apache 2.0 license.
 https://www.apache.org/licenses/LICENSE-2.0
 
-# Icons from:
+### Icons from:
 key-change: Austin Andrews
 key-remove: Austin Andrews
 key-chain: Mateo Silguero
 key-plus: Austin Andrews
 key-link: Haley Halcyon
+
+## Author
+
+Massimo Savazzi  
+Email: massimo@savazzi.eu  
+GitHub: [msavazzi](https://github.com/msavazzi)
