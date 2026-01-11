@@ -1610,6 +1610,7 @@ class CAManager(QtWidgets.QMainWindow):
         self.icons = {
             "valid": self.style().standardIcon(QtWidgets.QStyle.SP_DialogApplyButton),
             "warning": self.style().standardIcon(QtWidgets.QStyle.SP_MessageBoxWarning),
+            # Explicit expired icon (critical) to visually distinguish expired certs
             "expired": self.style().standardIcon(QtWidgets.QStyle.SP_MessageBoxCritical),
             "invalid": self.style().standardIcon(QtWidgets.QStyle.SP_MessageBoxQuestion),
             "chain": self.style().standardIcon(QtWidgets.QStyle.SP_FileDialogDetailedView)
@@ -1997,9 +1998,10 @@ class CAManager(QtWidgets.QMainWindow):
             # Renew button: active for single certificates (regardless of expiry)
             self.renewButton.setEnabled(is_single_cert)
             
-            # Revoke button: active only for single, non-expired certificates
-            is_non_expired = cert_status not in ["expired", "invalid"]
-            self.revokeButton.setEnabled(is_single_cert and is_non_expired)
+            # Revoke button: active for single certificates except when status is 'invalid'
+            # Allow revocation of expired certificates (to clean up CA DB or revoke old certs)
+            is_revokable = cert_status not in ["invalid"]
+            self.revokeButton.setEnabled(is_single_cert and is_revokable)
             
             # Keychain button: active only for valid single certificates that aren't already keychains
             is_valid_cert = cert_status in ["valid", "warning"]  # Include warning (expiring soon)
@@ -2303,11 +2305,11 @@ class CAManager(QtWidgets.QMainWindow):
         cert_status = item.data(2, QtCore.Qt.UserRole)
         cert_file = os.path.basename(cert_path)
 
-        # Double check the certificate is not expired
-        if cert_status in ["expired", "invalid"]:
+        # Only block revocation if certificate is marked invalid (corrupted/unreadable)
+        if cert_status == "invalid":
             msg_box = create_custom_message_box(
                 self, 'Cannot Revoke Certificate',
-                f'Cannot revoke certificate "{cert_file}" because it is {cert_status}.',
+                f'Cannot revoke certificate "{cert_file}" because it has an invalid format or cannot be read.',
                 QtWidgets.QMessageBox.Warning,
                 "revoke",
                 QtWidgets.QMessageBox.Ok,
