@@ -910,8 +910,9 @@ class NewCertificateDialog(QtWidgets.QDialog):
 
             # Add extensions if matched section found
             if hasattr(self, 'matched_section') and self.matched_section:
-                sign_cmd.extend(["-extensions", self.matched_section])
-                openssl_logger.info(f"Using extensions section: {self.matched_section}")
+                ext_name = self.matched_section.strip()
+                sign_cmd.extend(["-extensions", ext_name])
+                openssl_logger.info(f"Using extensions section: {ext_name}")
 
             result = run_openssl_command(sign_cmd, cwd=base_dir, description=f"Sign certificate for {cert_name}")
             if result.returncode != 0:
@@ -1613,6 +1614,7 @@ class CAManager(QtWidgets.QMainWindow):
             # Explicit expired icon (critical) to visually distinguish expired certs
             "expired": self.style().standardIcon(QtWidgets.QStyle.SP_MessageBoxCritical),
             "invalid": self.style().standardIcon(QtWidgets.QStyle.SP_MessageBoxQuestion),
+            "revoked": self.style().standardIcon(QtWidgets.QStyle.SP_DialogCancelButton),
             "chain": self.style().standardIcon(QtWidgets.QStyle.SP_FileDialogDetailedView)
         }
 
@@ -1931,6 +1933,28 @@ class CAManager(QtWidgets.QMainWindow):
                     subject = f"{subject} (Chain: {len(certificates)} certs)"
 
             # Store certificate item data
+            # If CA config is loaded, check if the certificate is revoked using OpenSSL
+            if not has_error and getattr(self, 'ca_config_loaded', False):
+                try:
+                    config_path_text = self.configPathEdit.text().strip() if hasattr(self, 'configPathEdit') else ''
+                    if config_path_text:
+                        # Get certificate serial
+                        r_serial = run_openssl_command(["openssl", "x509", "-in", cert_path, "-noout", "-serial"], cwd=os.path.dirname(cert_path))
+                        serial_line = r_serial.stdout.strip() if r_serial.returncode == 0 else ""
+                        serial_val = None
+                        if serial_line.startswith("serial="):
+                            serial_val = serial_line.split('=', 1)[1].strip()
+
+                        if serial_val:
+                            # Query OpenSSL CA for status using the provided config path
+                            r_status = run_openssl_command(["openssl", "ca", "-config", config_path_text, "-status", serial_val], cwd=os.path.dirname(config_path_text))
+                            status_out = (r_status.stdout + r_status.stderr).lower() if r_status else ""
+                            if "revoked" in status_out:
+                                status = "revoked"
+                except Exception:
+                    # Any error while checking revocation should not break listing
+                    pass
+
             cert_item = CertificateItem(
                 cert_path, cert_type, status, subject, issuer, expiry_str,
                 self.icons.get(status, self.icons["invalid"])
@@ -2174,7 +2198,44 @@ class CAManager(QtWidgets.QMainWindow):
             import shutil
             shutil.copy2(cert_path, backup_file)
             openssl_logger.info(f"Backup created successfully: {backup_file}")
-            
+
+            # Try to determine a matching extensions section for this certificate
+            matched_section = None
+            try:
+                # Prefer SAN-based matching if available
+                san_entries = get_certificate_san(cert_path)
+
+                # Also try to extract CN from the subject as a fallback
+                cert_info = get_certificate_info(cert_path)
+                subject = cert_info.get('subject', '') if isinstance(cert_info, dict) else ''
+                cn_match = None
+                if subject:
+                    m = re.search(r'CN=([^,/]+)', subject)
+                    if m:
+                        cn_match = m.group(1).strip()
+
+                # Search config sections for a match (SANs, CN or section name)
+                for sec in self.config.sections():
+                    # Skip CA-related base sections heuristics if needed
+                    values_joined = " ".join(self.config[sec].values())
+
+                    # Match by SAN entries
+                    if any(san.lower() in values_joined.lower() for san in san_entries):
+                        matched_section = sec
+                        break
+
+                    # Match by CN value
+                    if cn_match and cn_match.lower() in values_joined.lower():
+                        matched_section = sec
+                        break
+
+                    # Match by exact section name == cert name
+                    if sec.strip().lower() == cert_name.strip().lower():
+                        matched_section = sec
+                        break
+            except Exception:
+                matched_section = None
+
             # Prepare OpenSSL command for renewal
             sign_cmd = [
                 "openssl", "ca", 
@@ -2187,6 +2248,12 @@ class CAManager(QtWidgets.QMainWindow):
                 "-passin", f"pass:{ca_password}",
                 "-batch"
             ]
+
+            # If we found a matching extensions section, request OpenSSL to use it
+            if matched_section:
+                ext_name = matched_section.strip()
+                sign_cmd.extend(["-extensions", ext_name])
+                openssl_logger.info(f"Using extensions section for renewal: {ext_name}")
             
             openssl_logger.info(f"Executing certificate renewal command")
             openssl_logger.info(f"Command: {' '.join(sign_cmd[:sign_cmd.index('-passin')] + ['-passin', 'pass:***'])}")
@@ -2671,13 +2738,32 @@ class CAManager(QtWidgets.QMainWindow):
         config = self.config
         base_sections = self.ca_sections if hasattr(self, 'ca_sections') else []
 
+        # Determine certificate CN and name for fallback matching
+        cert_file = os.path.basename(cert_path)
+        cert_name = cert_file.replace('.cert.pem', '')
+        cert_info = get_certificate_info(cert_path)
+        subject = cert_info.get('subject', '') if isinstance(cert_info, dict) else ''
+        cn_value = None
+        if subject:
+            mm = re.search(r'CN=([^,/]+)', subject)
+            if mm:
+                cn_value = mm.group(1).strip()
+
         matched_sections = []
         for sec in config.sections():
             if sec in base_sections:
                 continue
 
             values_joined = " ".join(config[sec].values())
-            matched = any(san in values_joined for san in san_entries)
+            # Prefer SAN matching; if no SANs, fall back to CN or section name matching
+            matched = False
+            if san_entries:
+                matched = any(san.lower() in values_joined.lower() for san in san_entries)
+            else:
+                if cn_value and cn_value.lower() in values_joined.lower():
+                    matched = True
+                elif sec.strip().lower() == cert_name.strip().lower():
+                    matched = True
 
             for k, v in config[sec].items():
                 clean_v = clean_config_value(v)
