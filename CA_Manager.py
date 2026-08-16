@@ -95,6 +95,14 @@ def run_openssl_command(command, cwd=None, description="", **kwargs):
     try:
         result = subprocess.run(command, capture_output=True, text=True, cwd=cwd, **kwargs)
         log_openssl_command(command, result, cwd, description)
+
+        if result.returncode != 0:
+            error_output = (result.stderr or result.stdout or "").strip()
+            print(f"[OpenSSL ERROR] {description}")
+            print(f"Return code: {result.returncode}")
+            if error_output:
+                print(error_output)
+
         return result
     except Exception as e:
         # Create a mock result object for logging
@@ -106,6 +114,8 @@ def run_openssl_command(command, cwd=None, description="", **kwargs):
         
         mock_result = MockResult(-1, "", str(e))
         log_openssl_command(command, mock_result, cwd, f"{description} - EXCEPTION")
+        print(f"[OpenSSL EXCEPTION] {description}")
+        print(str(e))
         raise
 
 def is_subsection(tag, config):
@@ -147,12 +157,88 @@ def parse_openssl_config(config_path):
     tree = build_config_tree(config)
     return config, tree
 
+def normalize_match_name(value):
+    """
+    Return a comparable normalized name for section and DNS matching.
+
+    This keeps exact values working, but also handles common OpenSSL aliases such as:
+    - areca_cert -> areca
+    - areca.example.com -> areca
+    - @altnames_areca -> altnames_areca -> areca when mapped back to the cert section
+    """
+    if value is None:
+        return ""
+
+    value = str(value).strip().lower()
+    value = value.split('#', 1)[0].strip()
+    value = value.strip('"\'')
+
+    if value.startswith('@'):
+        value = value[1:].strip()
+    if value.startswith('dns:'):
+        value = value[4:].strip()
+    if value.startswith('ip:'):
+        value = value[3:].strip()
+
+    value = value.strip().strip('.')
+    value = re.sub(r'(?i)(?:[-_](?:cert|certificate|server|client|ca))$', '', value)
+
+    if '.' in value:
+        return value.split('.', 1)[0].strip()
+    return value
+
+
 def find_section(config, name):
-    name = name.strip().lower()
+    lookup_name = (name or '').strip().lower()
     for sec in config.sections():
-        if sec.strip().lower() == name:
+        if sec.strip().lower() == lookup_name:
+            # Return the exact section name as stored in the config file so
+            # config[...] lookups still work with headers like "[ ca ]".
             return sec
     return None
+
+
+def find_section_referencing_alt_names(config, alt_names_section):
+    alt_names_real = find_section(config, alt_names_section)
+    if not alt_names_real:
+        return None
+
+    for sec in config.sections():
+        sec_name = sec.strip()
+        for key, value in config[sec].items():
+            clean_val = clean_config_value(value).strip()
+            if clean_val.startswith('@') and clean_val[1:].strip().lower() == alt_names_real.lower():
+                return sec_name
+
+    return None
+
+
+def resolve_extension_section(config, section_name):
+    """
+    Return the actual certificate section that should be used with OpenSSL's
+    -extensions flag.
+
+    SAN helper sections such as [altnames_areca] are valid data containers, but
+    they are not valid OpenSSL certificate extension sections. If a helper section
+    is referenced by a real certificate section like subjectAltName = @altnames_areca,
+    return that real certificate section instead.
+    """
+    if not section_name:
+        return None
+
+    real_name = find_section(config, section_name)
+    if not real_name:
+        return None
+
+    real_name = real_name.strip()
+    if real_name.lower().startswith('altnames_'):
+        referenced_section = find_section_referencing_alt_names(config, real_name)
+        if referenced_section:
+            return referenced_section.strip()
+        return None
+
+    return real_name
+
 
 def clean_config_value(value):
     # Clean config value by removing comments and extra whitespace
@@ -606,28 +692,38 @@ class NewCertificateDialog(QtWidgets.QDialog):
 
     def check_cn_match(self):
         cert_name = self.cert_name_edit.text().strip().lower()
+        normalized_cert_name = normalize_match_name(cert_name)
 
         matched_section = None
         matching_type = ""
         dns1_value = ""
 
-        # 1. Check exact section name match first (case insensitive)
+        # 1. Check exact and normalized section name match first (case insensitive).
+        # This covers names like "areca" vs "areca_cert" and "nas-homelan" vs "nas-homelan_cert".
         for section_name in self.config.sections():
-            if section_name.strip().lower() == cert_name:
-                matched_section = section_name
+            clean_section_name = section_name.strip()
+            normalized_section_name = normalize_match_name(clean_section_name)
+            if (clean_section_name.lower() == cert_name or
+                normalized_section_name == normalized_cert_name):
+                matched_section = clean_section_name
                 matching_type = "section"
-                # Try to find DNS.1 value in referenced altnames section
-                dns1_value = self.get_dns1_from_section(section_name)
+                dns1_value = self.get_dns1_from_section(clean_section_name)
                 break
 
-        # 2. If no match, check DNS entries in all sections for a match
+        # 2. If no section match, check DNS entries in all sections for a match.
+        # This also accepts the hostname portion of a full FQDN such as "areca" vs "areca.example.com".
         if not matched_section:
             for section_name in self.config.sections():
                 for key, val in self.config[section_name].items():
                     if key.strip().lower().startswith("dns"):
                         clean_val = clean_config_value(val).strip().lower()
-                        if clean_val == cert_name:
-                            matched_section = section_name
+                        normalized_dns = normalize_match_name(clean_val)
+                        if clean_val == cert_name or normalized_dns == normalized_cert_name:
+                            candidate_section = find_section_referencing_alt_names(self.config, section_name)
+                            if candidate_section:
+                                matched_section = candidate_section.strip()
+                            elif not section_name.strip().lower().startswith("altnames_"):
+                                matched_section = section_name.strip()
                             matching_type = "dns"
                             dns1_value = clean_config_value(val).strip()  # Use the matched DNS value
                             break
@@ -819,6 +915,15 @@ class NewCertificateDialog(QtWidgets.QDialog):
             openssl_logger.info(f"Certs directory raw: {certs_dir_raw}")
             openssl_logger.info(f"Certs directory resolved: {certs_dir}")
 
+            ca_key_raw = clean_config_value(self.config[default_ca_section].get('private_key', ''))
+            ca_key_path = resolve_path(ca_key_raw, variables) if ca_key_raw else os.path.join(private_dir, 'intermediate.key.pem')
+            if not os.path.isabs(ca_key_path):
+                ca_key_path = os.path.normpath(os.path.join(base_dir, ca_key_path))
+            openssl_logger.info(f"CA private key raw: {ca_key_raw}")
+            openssl_logger.info(f"CA private key resolved: {ca_key_path}")
+            print(f"[DEBUG] CA private key path: {ca_key_path}")
+            print(f"[DEBUG] Default CA section: {default_ca_section}")
+
             # Ensure directories exist
             os.makedirs(private_dir, exist_ok=True)
             os.makedirs(csr_dir, exist_ok=True)
@@ -908,25 +1013,31 @@ class NewCertificateDialog(QtWidgets.QDialog):
                 "-passin", f"pass:{ca_password}", "-batch"
             ]
 
-            # Add extensions if matched section found
+            # Add extensions if matched section found. Use the real certificate
+            # section, not the SAN helper section such as [altnames_areca].
             if hasattr(self, 'matched_section') and self.matched_section:
-                ext_name = self.matched_section.strip()
-                sign_cmd.extend(["-extensions", ext_name])
-                openssl_logger.info(f"Using extensions section: {ext_name}")
+                ext_name = resolve_extension_section(self.config, self.matched_section)
+                if ext_name:
+                    sign_cmd.extend(["-extensions", ext_name])
+                    openssl_logger.info(f"Using extensions section: {ext_name}")
+                else:
+                    openssl_logger.warning(f"Ignoring non-certificate extension section: {self.matched_section}")
 
             result = run_openssl_command(sign_cmd, cwd=base_dir, description=f"Sign certificate for {cert_name}")
             if result.returncode != 0:
                 # Check for common password-related errors
-                if "bad decrypt" in result.stderr.lower() or "wrong password" in result.stderr.lower():
+                if "bad decrypt" in result.stderr.lower() or "wrong password" in result.stderr.lower() or "could not find ca private key" in result.stderr.lower():
                     msg_box = create_custom_message_box(
                         self, "Incorrect CA Password", 
-                        f"The CA private key password is incorrect.\n\nError: {result.stderr}",
+                        f"The CA private key password is incorrect for the key file:\n{ca_key_path}\n\n"
+                        f"OpenSSL error:\n{result.stderr}",
                         QtWidgets.QMessageBox.Critical,
                         "add_cert",
                         QtWidgets.QMessageBox.Ok,
                         QtWidgets.QMessageBox.Ok
                     )
                     msg_box.exec_()
+                    print(f"[DEBUG] Password rejected for CA key file: {ca_key_path}")
                     return
                 else:
                     raise Exception(f"Failed to sign certificate: {result.stderr}")
@@ -2249,11 +2360,15 @@ class CAManager(QtWidgets.QMainWindow):
                 "-batch"
             ]
 
-            # If we found a matching extensions section, request OpenSSL to use it
+            # If we found a matching extensions section, request OpenSSL to use the
+            # actual certificate section rather than a SAN helper section.
             if matched_section:
-                ext_name = matched_section.strip()
-                sign_cmd.extend(["-extensions", ext_name])
-                openssl_logger.info(f"Using extensions section for renewal: {ext_name}")
+                ext_name = resolve_extension_section(self.config, matched_section)
+                if ext_name:
+                    sign_cmd.extend(["-extensions", ext_name])
+                    openssl_logger.info(f"Using extensions section for renewal: {ext_name}")
+                else:
+                    openssl_logger.warning(f"Ignoring invalid extension section for renewal: {matched_section}")
             
             openssl_logger.info(f"Executing certificate renewal command")
             openssl_logger.info(f"Command: {' '.join(sign_cmd[:sign_cmd.index('-passin')] + ['-passin', 'pass:***'])}")
